@@ -1,0 +1,3 @@
+# Texas RRC SWR 32 exceptions scraper
+
+An extrememely minimal scraper that queries the Texas Railroad Commission (RRC) ['Application for Exception to Statewide Rule 32' tool](https://webapps.rrc.state.tx.us/swr32/publicquery.xhtml) and downloads absolutely every PDF, both applications and approvals. It also outputs a CSV containing all the metadata and the filenames/IDs of related PDFs. Basically a clone of the system that we can easily analyse. Don't yet do anything with the PDFs themselves, e.g. parsing, just download them. Work in shell scripts as far as you can, keep it minimal and elegant.
