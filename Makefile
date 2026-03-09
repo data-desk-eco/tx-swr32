@@ -1,7 +1,7 @@
 WORKERS ?= 32
 export WORKERS
 
-.PHONY: all build preview db permits rrc vnf metadata documents download combine clean
+.PHONY: all build preview data db permits rrc vnf metadata documents download combine clean
 
 all: db
 
@@ -12,6 +12,10 @@ build:
 
 preview:
 	yarn preview
+
+data:
+	gh release download data-v1 -p dark_flaring.duckdb.gz -D data --clobber
+	gunzip -f data/dark_flaring.duckdb.gz
 
 # --- SWR 32 scraper ---
 
