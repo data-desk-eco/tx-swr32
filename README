@@ -1,0 +1,47 @@
+tx-swr32: Dark Flaring Analysis
+================================
+
+Identifies unpermitted ("dark") flaring in the Permian Basin by
+cross-referencing three public datasets:
+
+  1. SWR 32 exception permits — scraped from the Texas RRC
+  2. RRC well locations — parsed from EBCDIC bulk data files
+  3. VIIRS Nightfire — satellite-detected flares from EOG/NOAA
+
+The pipeline spatially matches satellite flare detections to nearby
+wells, then checks whether those wells had valid SWR 32 flaring
+permits at the time of detection.
+
+Current results: 87 flare sites with 6,021 detection-days across
+2012-2026, none covered by an SWR 32 exception permit.
+
+
+Setup
+-----
+Requires: uv, duckdb CLI, Playwright (chromium)
+Optional: EOG account for VNF data (credentials in .env)
+
+  uv sync
+  uv run playwright install chromium
+  make db
+
+
+Next steps: well-to-operator linkage
+-------------------------------------
+All operator_name values in the output are currently NULL. The
+operator lookup goes: well -> lease number -> permit -> operator_no
+-> operators table. This fails because the wells matched by VNF
+mostly don't appear in the SWR 32 permits (that's the point — they're
+unpermitted).
+
+To get operators for dark flare sites, the wellbore EBCDIC file has
+an operator number field that we're not currently extracting. It
+lives in the type 01 root record (the exact byte offset needs
+investigation — likely bytes 16-21 or similar). Extracting it in
+parse_rrc.py and adding an operator_no column to wells.csv would
+let the analysis join directly:
+
+  wells.operator_no -> operators.operator_number -> operator_name
+
+This would answer "who is flaring without a permit?" rather than
+just "where is unpermitted flaring happening?"
