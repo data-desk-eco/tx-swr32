@@ -18,7 +18,7 @@ FROM read_csv('data/wells.csv', header=true, auto_detect=true);
 INSERT INTO operators
 SELECT * FROM read_csv('data/operators.csv', header=true, auto_detect=true);
 
--- VNF: read profiles, filter to nighttime, aggregate to daily per flare
+-- VNF: read profiles with explicit types (avoids auto_detect on 1700 files)
 INSERT INTO vnf
 SELECT flare_id, AVG(lat), AVG(lon), date,
     BOOL_OR(cloud = 0) AS clear,
@@ -28,19 +28,15 @@ SELECT flare_id, AVG(lat), AVG(lon), date,
     COUNT(*), NULL
 FROM (
     SELECT CAST(regexp_extract(filename, 'site_(\d+)', 1) AS INTEGER) AS flare_id,
-           CAST("Date_Mscan" AS DATE) AS date,
-           CAST("Lat_GMTCO" AS DOUBLE) AS lat,
-           CAST("Lon_GMTCO" AS DOUBLE) AS lon,
-           CAST("Cloud_Mask" AS INTEGER) AS cloud,
-           CAST("Temp_BB" AS DOUBLE) AS temp,
-           CAST("RH" AS DOUBLE) AS rh
-    FROM read_csv('data/vnf_profiles/site_*.csv',
-                  filename=true, union_by_name=true, ignore_errors=true, auto_detect=true)
-    WHERE CAST("Sunlit" AS INTEGER) = 0
+           Date_Mscan::DATE AS date, Lat_GMTCO::DOUBLE AS lat, Lon_GMTCO::DOUBLE AS lon,
+           Cloud_Mask::INTEGER AS cloud, Temp_BB::DOUBLE AS temp, RH::DOUBLE AS rh
+    FROM read_csv('data/vnf_profiles/site_*.csv', filename=true, union_by_name=true,
+                  ignore_errors=true, all_varchar=true, header=true)
+    WHERE Sunlit::INTEGER = 0
 )
 GROUP BY flare_id, date;
 
--- Geometry columns and indexes
+-- Geometry + indexes
 UPDATE vnf SET geom = ST_Point(lon, lat) WHERE lat IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_wells_geom ON wells USING RTREE (geom);
 CREATE INDEX IF NOT EXISTS idx_vnf_geom ON vnf USING RTREE (geom);

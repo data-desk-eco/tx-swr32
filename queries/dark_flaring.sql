@@ -54,8 +54,10 @@ SELECT is_dark,
 FROM dark_flares GROUP BY is_dark;
 
 CREATE OR REPLACE VIEW top_dark_flares AS
-SELECT flare_id, lease_district, lease_number, operator_name, vnf_lat, vnf_lon,
+SELECT flare_id, lease_district, lease_number, operator_name,
+    round(avg(vnf_lat), 4) AS vnf_lat, round(avg(vnf_lon), 4) AS vnf_lon,
     count(*) AS detection_days, round(sum(rh_mw), 1) AS total_rh_mw,
     min(date) AS first_seen, max(date) AS last_seen
 FROM dark_flares WHERE is_dark
-GROUP BY ALL ORDER BY total_rh_mw DESC;
+GROUP BY flare_id, lease_district, lease_number, operator_name
+ORDER BY total_rh_mw DESC;
