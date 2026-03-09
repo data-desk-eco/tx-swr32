@@ -32,14 +32,18 @@ def parse_wellbore(gz_path: Path, out_dir: Path):
     Two passes: first collect locations (type 13), then stream completions
     (type 02) filtered to Permian districts directly to CSV.
     """
-    # Pass 1: collect all locations
+    # Pass 1: collect all locations and operator numbers
     locations = {}
+    operator_nos = {}
     current_api = None
     with gzip.open(gz_path, "rb") as f:
         while (rec := f.read(WELLBORE_RECLEN)) and len(rec) == WELLBORE_RECLEN:
             rtype = ebcdic(rec[0:2])
             if rtype == "01":
                 current_api = ebcdic(rec[2:5]) + ebcdic(rec[5:10])
+                op_no = ebcdic(rec[28:34])
+                if op_no and op_no != "000000":
+                    operator_nos[current_api] = op_no
             elif rtype == "13" and current_api:
                 lat = signed_decimal(rec[132:142], 7)
                 lon = signed_decimal(rec[142:152], 7)
@@ -53,7 +57,7 @@ def parse_wellbore(gz_path: Path, out_dir: Path):
     with gzip.open(gz_path, "rb") as f, open(out_path, "w", newline="") as fout:
         w = csv.writer(fout)
         w.writerow(["api", "oil_gas_code", "lease_district", "lease_number",
-                     "well_number", "latitude", "longitude"])
+                     "well_number", "operator_no", "latitude", "longitude"])
         while (rec := f.read(WELLBORE_RECLEN)) and len(rec) == WELLBORE_RECLEN:
             rtype = ebcdic(rec[0:2])
             if rtype == "01":
@@ -71,8 +75,9 @@ def parse_wellbore(gz_path: Path, out_dir: Path):
                     continue
                 seen.add(key)
                 loc = locations.get(current_api)
+                op = operator_nos.get(current_api, "")
                 w.writerow([current_api, og, district, lease, ebcdic(rec[10:16]),
-                            loc[0] if loc else "", loc[1] if loc else ""])
+                            op, loc[0] if loc else "", loc[1] if loc else ""])
 
     print(f"Wrote {len(seen)} Permian wells to {out_path}")
 

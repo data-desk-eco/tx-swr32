@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS wells (
     lease_district  VARCHAR,
     lease_number    VARCHAR,
     well_number     VARCHAR,
+    operator_no     VARCHAR,
     latitude        DOUBLE,
     longitude       DOUBLE,
     geom            GEOMETRY

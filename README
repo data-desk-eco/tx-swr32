@@ -26,22 +26,19 @@ Optional: EOG account for VNF data (credentials in .env)
   make db
 
 
-Next steps: well-to-operator linkage
--------------------------------------
-All operator_name values in the output are currently NULL. The
-operator lookup goes: well -> lease number -> permit -> operator_no
--> operators table. This fails because the wells matched by VNF
-mostly don't appear in the SWR 32 permits (that's the point — they're
-unpermitted).
-
-To get operators for dark flare sites, the wellbore EBCDIC file has
-an operator number field that we're not currently extracting. It
-lives in the type 01 root record (the exact byte offset needs
-investigation — likely bytes 16-21 or similar). Extracting it in
-parse_rrc.py and adding an operator_no column to wells.csv would
-let the analysis join directly:
+Operator linkage
+-----------------
+Each well now carries an operator_no extracted from the EBCDIC type 01
+root record (bytes 28-33). The analysis joins directly:
 
   wells.operator_no -> operators.operator_number -> operator_name
 
-This would answer "who is flaring without a permit?" rather than
-just "where is unpermitted flaring happening?"
+29% of dark flare detection-days resolve to a named operator via the
+current P-5 file. The remainder show as "OP#NNNNNN" — these are
+operator numbers for companies no longer in the active P-5 roster.
+
+Next steps
+----------
+- Enrich operator coverage: historical P-5 files, or scrape the RRC
+  operator lookup by number to fill in names for inactive operators.
+- Aggregate by operator: rank operators by total dark flaring activity.

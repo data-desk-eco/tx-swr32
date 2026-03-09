@@ -7,7 +7,7 @@
     Satellite-detected flares without SWR 32 exception permits
   </script>
 
-  <script id="summary" type="application/sql" database="../data/dark_flaring.duckdb">
+  <script id="summary" output="summary" type="application/sql" database="../data/dark_flaring.duckdb">
     SELECT is_dark,
       count(*) AS detection_days,
       count(DISTINCT flare_id) AS flare_sites,
@@ -20,13 +20,14 @@
   </script>
 
   <script id="top_flares" output="topFlares" type="application/sql" database="../data/dark_flaring.duckdb">
-    SELECT flare_id, lease_district, lease_number, operator_name,
+    SELECT flare_id, lease_district, lease_number, operator_no,
+      COALESCE(operator_name, 'OP#' || operator_no) AS operator,
       round(avg(vnf_lat), 4) AS lat, round(avg(vnf_lon), 4) AS lon,
       count(*) AS detection_days, round(sum(rh_mw), 1) AS total_rh_mw,
       min(date) AS first_seen, max(date) AS last_seen
     FROM dark_flares
     WHERE is_dark
-    GROUP BY flare_id, lease_district, lease_number, operator_name
+    GROUP BY flare_id, lease_district, lease_number, operator_no, operator_name
     ORDER BY total_rh_mw DESC
     LIMIT 50
   </script>
@@ -43,24 +44,37 @@
     Each satellite flare detection is spatially matched to the nearest well within 750m, then checked for a valid SWR 32 flaring permit covering that date. A "dark" flare is one with no matching permit.
   </script>
 
-  <script id="table" type="text/markdown">
-    ## Top dark flare sites by cumulative radiant heat
+  <script id="texas" output="texas" type="module" hidden>
+    const us = await fetch("https://cdn.jsdelivr.net/npm/us-atlas@3/states-10m.json").then(r => r.json());
+    const states = topojson.feature(us, us.objects.states);
+    const tx = {type: "FeatureCollection", features: states.features.filter(d => d.id === "48")};
+    display(tx);
   </script>
 
-  <script id="display_table" type="module">
-    display(Inputs.table(topFlares, {
-      columns: ["flare_id", "lease_district", "lease_number", "detection_days", "total_rh_mw", "first_seen", "last_seen", "lat", "lon"],
-      header: {
-        flare_id: "Flare ID",
-        lease_district: "District",
-        lease_number: "Lease",
-        detection_days: "Days detected",
-        total_rh_mw: "Total RH (MW)",
-        first_seen: "First seen",
-        last_seen: "Last seen",
-        lat: "Lat",
-        lon: "Lon"
-      }
-    }))
+  <script id="map_heading" type="text/markdown">
+    ## Dark flare sites
+    Circle size shows cumulative radiant heat output. ${topFlares.length} sites, ${d3.sum(topFlares, d => d.detection_days).toLocaleString()} detection-days.
+  </script>
+
+  <script id="map" type="module">
+    display(Plot.plot({
+      projection: {type: "mercator", domain: texas},
+      width: 960,
+      height: 600,
+      color: {scheme: "YlOrRd", type: "log", label: "Total RH (MW)", legend: true},
+      r: {range: [3, 30]},
+      marks: [
+        Plot.geo(texas, {fill: "#1a1a2e", stroke: "#333"}),
+        Plot.dot(topFlares, {
+          x: "lon", y: "lat",
+          r: "total_rh_mw",
+          fill: "total_rh_mw",
+          stroke: "#fff",
+          strokeWidth: 0.5,
+          tip: true,
+          title: d => `${d.operator}\nDistrict ${d.lease_district}, Lease ${d.lease_number}\n${d.detection_days} days detected\n${d.total_rh_mw} MW total RH\n${d.first_seen} – ${d.last_seen}`
+        })
+      ]
+    }));
   </script>
 </notebook>
