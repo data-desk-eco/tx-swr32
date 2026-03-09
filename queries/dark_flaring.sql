@@ -11,7 +11,7 @@ CREATE OR REPLACE TEMP TABLE flare_sites AS
 SELECT flare_id, AVG(lat) AS lat, AVG(lon) AS lon, ST_Point(AVG(lon), AVG(lat)) AS geom
 FROM vnf WHERE detected GROUP BY flare_id;
 
--- Match each flare site to nearest well within ~1km
+-- Match each flare site to nearest well within ~1km (for attribution)
 CREATE OR REPLACE TEMP TABLE site_well_match AS
 WITH candidates AS (
     SELECT f.flare_id,
@@ -28,7 +28,7 @@ WITH candidates AS (
 )
 SELECT * EXCLUDE (rn) FROM nearest WHERE rn = 1;
 
--- Match each flare site to nearest permitted flare location within ~1.5km
+-- ALL permitted flare locations within ~1.5km (for permit date checking)
 CREATE OR REPLACE TEMP TABLE site_permit_loc_match AS
 SELECT f.flare_id, fl.filing_no,
        ST_Distance_Sphere(f.geom, fl.geom) / 1000.0 AS distance_km,
@@ -69,41 +69,52 @@ CREATE OR REPLACE MACRO district_match(well_d, permit_d) AS
     OR (well_d = '08' AND permit_d IN ('08', '8A'))
     OR (well_d = '07' AND permit_d IN ('07', '7C', '7B'));
 
--- Pre-parse permit dates
+-- Pre-parse permit dates (include Submitted/Hearing Pending for benefit of the doubt)
+-- Following Earthworks methodology: give operators every benefit of the doubt
 CREATE OR REPLACE TEMP TABLE permits_parsed AS
 SELECT filing_no, property, lease_district, lease_number, operator_no,
     TRY_STRPTIME(effective_dt, '%m/%d/%Y')::DATE AS eff_date,
     TRY_STRPTIME(expiration_dt, '%m/%d/%Y')::DATE AS exp_date
-FROM permits WHERE status = 'Approved';
+FROM permits WHERE status IN ('Approved', 'Submitted', 'Hearing Pending', 'Resubmitted');
 
--- Permit coverage: lease match OR spatial match (with date overlap)
+-- Operator-based permit matching: if the well's current operator has ANY active
+-- permit in a compatible district on that date, give benefit of the doubt
+CREATE OR REPLACE TEMP TABLE operator_permit_coverage AS
+SELECT DISTINCT pp.operator_no, pp.lease_district, pp.filing_no, pp.eff_date, pp.exp_date
+FROM permits_parsed pp
+WHERE pp.operator_no IS NOT NULL AND pp.eff_date IS NOT NULL;
+
+-- Permit coverage: spatial match OR operator match (with date overlap)
+-- Checks ALL permit locations within radius, not just nearest (benefit of the doubt:
+-- if ANY nearby permitted location covers the date, consider the detection permitted)
+-- Also checks if the well's operator has any active permit in the same district
 -- Deduplicate: keep one row per (flare_id, date), preferring permitted over dark
 CREATE OR REPLACE TABLE dark_flares AS
 WITH matched AS (
     SELECT m.*,
         COALESCE(o.operator_name, m.permit_operator_name) AS operator_name,
-        COALESCE(p.filing_no, sp_p.filing_no) AS permit_filing_no,
-        COALESCE(p.eff_date, sp_p.eff_date) AS permit_effective,
-        COALESCE(p.exp_date, sp_p.exp_date) AS permit_expiration,
-        p.filing_no IS NULL AND sp_p.filing_no IS NULL AS is_dark,
+        COALESCE(sp_p.filing_no, op_p.filing_no) AS permit_filing_no,
+        COALESCE(sp_p.eff_date, op_p.eff_date) AS permit_effective,
+        COALESCE(sp_p.exp_date, op_p.exp_date) AS permit_expiration,
+        sp_p.filing_no IS NULL AND op_p.filing_no IS NULL AS is_dark,
         ROW_NUMBER() OVER (
             PARTITION BY m.flare_id, m.date
-            ORDER BY (p.filing_no IS NOT NULL OR sp_p.filing_no IS NOT NULL) DESC
+            ORDER BY (sp_p.filing_no IS NOT NULL OR op_p.filing_no IS NOT NULL) DESC
         ) AS rn
     FROM vnf_matched m
     LEFT JOIN operators o
         ON LPAD(o.operator_number, 6, '0') = LPAD(m.operator_no, 6, '0')
-    LEFT JOIN permits_parsed p
-        ON p.lease_number = m.lease_number
-        AND district_match(m.lease_district, p.lease_district)
-        AND p.eff_date <= m.date
-        AND (p.exp_date IS NULL OR p.exp_date >= m.date)
     LEFT JOIN (
         site_permit_loc_match sl
         JOIN permits_parsed sp_p ON sp_p.filing_no = sl.filing_no
     ) ON sl.flare_id = m.flare_id
         AND sp_p.eff_date <= m.date
         AND (sp_p.exp_date IS NULL OR sp_p.exp_date >= m.date)
+    LEFT JOIN operator_permit_coverage op_p
+        ON LPAD(op_p.operator_no, 6, '0') = LPAD(m.operator_no, 6, '0')
+        AND district_match(m.lease_district, op_p.lease_district)
+        AND op_p.eff_date <= m.date
+        AND (op_p.exp_date IS NULL OR op_p.exp_date >= m.date)
 )
 SELECT * EXCLUDE (rn) FROM matched WHERE rn = 1;
 

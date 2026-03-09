@@ -6,6 +6,7 @@ from playwright.sync_api import sync_playwright
 
 DATASETS = {
     "dbf900.ebc.gz": "b070ce28-5c58-4fe2-9eb7-8b70befb7af9",  # Wellbore
+    "p4f606.ebc.gz": "19f9b9c7-2b82-4d7c-8dbd-77145a86d3de",  # P-4 Schedule
     "orf850.ebc.gz": "04652169-eed6-4396-9019-2e270e790f6c",  # P-5 Org
 }
 

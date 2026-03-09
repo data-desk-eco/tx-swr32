@@ -144,4 +144,99 @@
     }));
   </script>
 
+  <script id="plume_summary_data" output="plumeSummary" type="application/sql" database="../data/dark_flaring.duckdb" hidden>
+    SELECT classification,
+      count(*) AS plume_count,
+      round(sum(emission_rate), 0) AS total_emission,
+      round(avg(emission_rate), 1) AS avg_emission,
+      min(date) AS earliest, max(date) AS latest
+    FROM plume_attributed
+    GROUP BY classification
+    ORDER BY total_emission DESC
+  </script>
+
+  <script id="unlit_data" output="unlitFlares" type="application/sql" database="../data/dark_flaring.duckdb" hidden>
+    SELECT plume_id, date, latitude AS lat, longitude AS lon,
+      emission_rate, source, satellite,
+      COALESCE(operator_name, 'Unknown') AS operator,
+      vnf_flare_id, well_distance_km
+    FROM plume_attributed
+    WHERE classification = 'unlit'
+    ORDER BY emission_rate DESC
+  </script>
+
+  <script id="plume_operators_data" output="plumeOperators" type="application/sql" database="../data/dark_flaring.duckdb" hidden>
+    SELECT * FROM top_plume_operators
+  </script>
+
+  <script id="plume_section_header" type="text/markdown">
+    ## Methane plumes
+
+    Satellite methane plume detections from [Carbon Mapper](https://carbonmapper.org/) and [IMEO/MARS](https://methanedata.unep.org/), spatially matched to RRC wells and cross-referenced with VIIRS Nightfire flare detections. Plumes near known flare sites *without* a concurrent thermal detection suggest **unlit flares** (venting).
+
+    **${unlitFlares.length} potential unlit flares** detected — methane plumes at flare infrastructure with no thermal signature.
+  </script>
+
+  <script id="plume_classification_chart" type="module">
+    display(Plot.plot({
+      title: "Methane plumes by classification",
+      width: 960,
+      height: 300,
+      x: {label: "Total methane emission rate (kg/hr)"},
+      y: {label: null},
+      color: {domain: ["unlit", "flaring", "wellpad", "unmatched"], range: ["#e63946", "#f4a261", "#457b9d", "#aaa"]},
+      marks: [
+        Plot.barX(plumeSummary, {y: "classification", x: "total_emission", fill: "classification", sort: {y: "-x"}, tip: true,
+          title: d => `${d.classification}: ${d.plume_count} plumes\n${d.total_emission.toLocaleString()} kg/hr total`}),
+        Plot.ruleX([0])
+      ]
+    }));
+  </script>
+
+  <script id="unlit_map" type="module">
+    if (unlitFlares.length > 0) {
+      display(Plot.plot({
+        title: "Potential unlit flares (methane plumes at flare sites with no thermal detection)",
+        projection: {type: "mercator", domain: {type: "MultiPoint", coordinates: [[-104.5, 30.5], [-100.0, 33.1]]}},
+        width: 960,
+        height: 700,
+        color: {scheme: "Reds", type: "log", label: "Emission rate (kg/hr)", legend: true},
+        r: {range: [4, 25], type: "sqrt"},
+        marks: [
+          Plot.geo(txCounties, {fill: "#1a1a2e", stroke: "#2a2a3e"}),
+          Plot.geo(tx, {fill: "none", stroke: "#555", strokeWidth: 1.5}),
+          Plot.dot(unlitFlares, {
+            x: "lon", y: "lat",
+            r: "emission_rate",
+            fill: "emission_rate",
+            stroke: "#fff",
+            strokeWidth: 0.5,
+            tip: true,
+            title: d => `${d.operator}\n${d.emission_rate} kg/hr\n${d.satellite}\n${d.date}`
+          })
+        ]
+      }));
+    }
+  </script>
+
+  <script id="plume_operator_header" type="text/markdown">
+    ### Top operators by methane emissions
+  </script>
+
+  <script id="plume_operator_chart" type="module">
+    const topPlumeOps = plumeOperators.filter(d => d.operator !== 'Unknown').slice(0, 15);
+    display(Plot.plot({
+      width: 960,
+      height: 400,
+      marginLeft: 250,
+      x: {label: "Total emission rate (kg/hr)", grid: true},
+      y: {label: null},
+      marks: [
+        Plot.barX(topPlumeOps, {y: "operator", x: "total_emission_kg_hr", fill: "var(--theme-foreground-focus)", sort: {y: "-x"}, tip: true,
+          title: d => `${d.operator}\n${d.plume_count} plumes (${d.unlit_count} unlit, ${d.flaring_count} flaring)\n${d.well_sites} well sites`}),
+        Plot.ruleX([0])
+      ]
+    }));
+  </script>
+
 </notebook>
