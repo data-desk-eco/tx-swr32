@@ -19,12 +19,11 @@ def download(out_dir: Path, filename: str):
 
     with sync_playwright() as p:
         browser = p.chromium.launch()
-        page = browser.new_page()
+        page = browser.new_page(viewport={"width": 1280, "height": 1200})
         page.goto(f"https://mft.rrc.texas.gov/link/{link_id}", wait_until="networkidle")
-        page.get_by_text(filename).click()
-        page.get_by_role("button", name="Download").click()
+        # Click the filename link directly to trigger download
         with page.expect_download(timeout=300_000) as dl:
-            pass
+            page.get_by_text(filename, exact=True).click()
         dl.value.save_as(str(out_path))
         browser.close()
         print(f"Downloaded {filename} -> {out_path}")

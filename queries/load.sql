@@ -1,4 +1,5 @@
 -- load.sql: Load all data into the database
+LOAD spatial;
 
 -- 1. Load SWR 32 permits
 INSERT INTO permits
@@ -14,20 +15,7 @@ SELECT
     CASE WHEN property LIKE '%-%-%'
          THEN split_part(property, '-', 3)
          ELSE NULL END AS lease_number
-FROM read_csv('data/filings.csv', delim='\t', header=true, all_varchar=true,
-              columns={
-                  'excep_seq': 'INTEGER',
-                  'submittal_dt': 'VARCHAR',
-                  'filing_no': 'INTEGER',
-                  'status': 'VARCHAR',
-                  'filing_type': 'VARCHAR',
-                  'operator_no': 'INTEGER',
-                  'operator_name': 'VARCHAR',
-                  'property': 'VARCHAR',
-                  'effective_dt': 'VARCHAR',
-                  'expiration_dt': 'VARCHAR',
-                  'fv_district': 'VARCHAR'
-              });
+FROM read_csv('data/filings.csv', delim='\t', header=true, all_varchar=true);
 
 -- 2. Load wells
 INSERT INTO wells

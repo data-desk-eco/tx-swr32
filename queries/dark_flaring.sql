@@ -44,17 +44,20 @@ SELECT
 FROM vnf_matched m
 LEFT JOIN operators o
     ON LPAD(o.operator_number, 6, '0') = (
-        -- Get operator from well via lease lookup
-        -- For now, join via the permit's operator since we have operator_no there
-        SELECT LPAD(CAST(pp.operator_no AS VARCHAR), 6, '0')
+        SELECT LPAD(pp.operator_no, 6, '0')
         FROM permits pp
-        WHERE pp.lease_district = m.lease_district
-          AND pp.lease_number = m.lease_number
+        WHERE pp.lease_number = m.lease_number
+          -- Wells use numeric districts (07,08); permits use alphanumeric (7C,8A,08)
+          AND (pp.lease_district = m.lease_district
+               OR (m.lease_district = '08' AND pp.lease_district IN ('08', '8A'))
+               OR (m.lease_district = '07' AND pp.lease_district IN ('07', '7C', '7B')))
         LIMIT 1
     )
 LEFT JOIN permits p
-    ON p.lease_district = m.lease_district
-    AND p.lease_number = m.lease_number
+    ON p.lease_number = m.lease_number
+    AND (p.lease_district = m.lease_district
+         OR (m.lease_district = '08' AND p.lease_district IN ('08', '8A'))
+         OR (m.lease_district = '07' AND p.lease_district IN ('07', '7C', '7B')))
     AND p.status = 'Approved'
     AND TRY_STRPTIME(p.effective_dt, '%m/%d/%Y') <= m.date
     AND (p.expiration_dt = ''

@@ -5,7 +5,7 @@ import gzip
 import sys
 from pathlib import Path
 
-PERMIAN_DISTRICTS = {"08", "7C", "8A"}
+PERMIAN_DISTRICTS = {"07", "08"}  # 07 covers 7C, 08 covers 8A in permits
 
 
 def ebcdic(data: bytes) -> str:
@@ -31,11 +31,11 @@ def signed_decimal(data: bytes, decimal_places: int) -> float | None:
 
 
 def parse_wellbore(gz_path: Path, out_dir: Path):
-    """Parse wellbore EBCDIC → wells.csv (root+location+wellid joined)."""
+    """Parse wellbore EBCDIC → wells.csv (root+location+completion joined)."""
     RECLEN = 247
-    roots = {}  # api -> {district, ...}
     locations = {}  # api -> {lat, lon}
-    wellids = []  # [{api, oil_gas_code, district, lease_number, well_number}]
+    completions = []  # [{api, oil_gas_code, lease_district, lease_number, well_number}]
+    current_api = None  # track API from preceding type 01 record
 
     with gzip.open(gz_path, "rb") as f:
         while True:
@@ -47,50 +47,35 @@ def parse_wellbore(gz_path: Path, out_dir: Path):
             if rtype == "01":
                 api_county = ebcdic(rec[2:5])
                 api_unique = ebcdic(rec[5:10])
-                district = ebcdic(rec[14:16])
-                api = f"{api_county}{api_unique}"
-                roots[api] = {"district": district}
+                current_api = f"{api_county}{api_unique}"
 
-            elif rtype == "13":
-                api_county = ebcdic(rec[2:5])
-                api_unique = ebcdic(rec[5:10])
-                api = f"{api_county}{api_unique}"
-                lat = signed_decimal(rec[132:142], 7)
-                lon = signed_decimal(rec[142:152], 7)
-                if lat and lon and lat != 0 and lon != 0:
-                    locations[api] = {"lat": lat, "lon": -abs(lon)}
-
-            elif rtype == "21":
-                api_county = ebcdic(rec[2:5])
-                api_unique = ebcdic(rec[5:10])
-                api = f"{api_county}{api_unique}"
-                # Need district from root record
-                root = roots.get(api, {})
-                district = root.get("district", "")
-
-                og_code = ebcdic(rec[10:11]) if len(rec) > 10 else ""
-                # Record type 21 layout differs from what we saw
-                # Oil: district(2) + lease(5) + well(6) starting at byte 10
-                # Gas: district+gasid(6) starting at byte 10
-                og_raw = ebcdic(rec[10:11])
-                if og_raw == "O":
-                    lease_district = ebcdic(rec[11:13])
-                    lease_number = ebcdic(rec[13:18])
-                    well_number = ebcdic(rec[18:24])
-                elif og_raw == "G":
-                    lease_district = ebcdic(rec[11:13])
-                    lease_number = ebcdic(rec[13:19])
-                    well_number = ""
-                else:
+            elif rtype == "02":
+                # Completion record: OG(1) + district(2) + lease(5) + well(6)
+                # Type 02 inherits API from preceding type 01
+                if current_api is None:
                     continue
-
-                wellids.append({
-                    "api": api,
+                og_raw = ebcdic(rec[2:3])
+                if og_raw not in ("O", "G"):
+                    continue
+                lease_district = ebcdic(rec[3:5])
+                lease_number = ebcdic(rec[5:10])
+                well_number = ebcdic(rec[10:16])
+                completions.append({
+                    "api": current_api,
                     "oil_gas_code": og_raw,
                     "lease_district": lease_district,
                     "lease_number": lease_number,
                     "well_number": well_number,
                 })
+
+            elif rtype == "13":
+                # Location record inherits API from preceding type 01
+                if current_api is None:
+                    continue
+                lat = signed_decimal(rec[132:142], 7)
+                lon = signed_decimal(rec[142:152], 7)
+                if lat and lon and lat != 0 and lon != 0:
+                    locations[current_api] = {"lat": lat, "lon": -abs(lon)}
 
     # Join and filter to Permian
     out_path = out_dir / "wells.csv"
@@ -99,19 +84,19 @@ def parse_wellbore(gz_path: Path, out_dir: Path):
         w.writerow(["api", "oil_gas_code", "lease_district", "lease_number",
                      "well_number", "latitude", "longitude"])
         seen = set()
-        for wid in wellids:
-            if wid["lease_district"] not in PERMIAN_DISTRICTS:
+        for comp in completions:
+            if comp["lease_district"] not in PERMIAN_DISTRICTS:
                 continue
-            api = wid["api"]
+            api = comp["api"]
             loc = locations.get(api, {})
             lat = loc.get("lat", "")
             lon = loc.get("lon", "")
-            key = (api, wid["oil_gas_code"], wid["lease_number"])
+            key = (api, comp["oil_gas_code"], comp["lease_number"])
             if key in seen:
                 continue
             seen.add(key)
-            w.writerow([api, wid["oil_gas_code"], wid["lease_district"],
-                        wid["lease_number"], wid["well_number"], lat, lon])
+            w.writerow([api, comp["oil_gas_code"], comp["lease_district"],
+                        comp["lease_number"], comp["well_number"], lat, lon])
 
     print(f"Wrote {len(seen)} Permian wells to {out_path}")
 

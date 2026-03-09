@@ -3,12 +3,12 @@ INSTALL spatial; LOAD spatial;
 
 -- SWR 32 exception permits
 CREATE TABLE IF NOT EXISTS permits (
-    excep_seq       INTEGER,
+    excep_seq       VARCHAR,
     submittal_dt    VARCHAR,
-    filing_no       INTEGER,
+    filing_no       VARCHAR,
     status          VARCHAR,
     filing_type     VARCHAR,
-    operator_no     INTEGER,
+    operator_no     VARCHAR,
     operator_name   VARCHAR,
     property        VARCHAR,
     effective_dt    VARCHAR,
