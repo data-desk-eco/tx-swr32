@@ -7,6 +7,5 @@ dependencies = [
     "playwright",
     "requests",
     "beautifulsoup4",
-    "duckdb",
     "python-dotenv",
 ]

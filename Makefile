@@ -5,7 +5,7 @@ export WORKERS
 
 all: db
 
-# --- SWR 32 scraper (existing) ---
+# --- SWR 32 scraper ---
 
 metadata: data/filings.csv
 documents: data/docs.csv
@@ -31,10 +31,11 @@ permits: data/filings.csv
 rrc: data/wells.csv data/operators.csv
 vnf: data/vnf_profiles/.done
 
-data/dbf900.ebc.gz data/orf850.ebc.gz:
+data/.rrc_downloaded:
 	uv run scripts/download_rrc.py data
+	@touch $@
 
-data/wells.csv data/operators.csv: data/dbf900.ebc.gz data/orf850.ebc.gz
+data/wells.csv data/operators.csv: data/.rrc_downloaded
 	uv run scripts/parse_rrc.py data
 
 data/vnf_profiles/.done:
@@ -45,7 +46,7 @@ data/vnf_profiles/.done:
 
 db: data/dark_flaring.duckdb
 
-data/dark_flaring.duckdb: data/filings.csv data/wells.csv data/operators.csv data/vnf_profiles/.done
+data/dark_flaring.duckdb: data/filings.csv data/wells.csv data/operators.csv data/vnf_profiles/.done queries/*.sql
 	@rm -f $@
 	duckdb $@ < queries/schema.sql
 	duckdb $@ < queries/load.sql
@@ -53,4 +54,4 @@ data/dark_flaring.duckdb: data/filings.csv data/wells.csv data/operators.csv dat
 	@echo "Database ready: $@"
 
 clean:
-	rm -f data/dark_flaring.duckdb data/wells.csv data/operators.csv
+	rm -f data/dark_flaring.duckdb data/wells.csv data/operators.csv data/.rrc_downloaded
