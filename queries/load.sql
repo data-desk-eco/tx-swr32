@@ -2,7 +2,7 @@ LOAD spatial;
 
 -- SWR 32 permits (parse "Oil Lease-08-43066" -> type, district, number)
 INSERT INTO permits
-SELECT *,
+SELECT * REPLACE (replace(operator_name, '&amp;', '&') AS operator_name),
     CASE WHEN property LIKE '%-%-%' THEN split_part(property, '-', 1) END,
     CASE WHEN property LIKE '%-%-%' THEN split_part(property, '-', 2) END,
     CASE WHEN property LIKE '%-%-%' THEN split_part(property, '-', 3) END

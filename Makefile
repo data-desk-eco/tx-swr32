@@ -1,7 +1,7 @@
 WORKERS ?= 32
 export WORKERS
 
-.PHONY: all build preview data db permits rrc vnf metadata documents download combine clean
+.PHONY: all build preview data db refresh permits rrc vnf metadata documents download combine clean
 
 all: db
 
@@ -55,6 +55,10 @@ data/vnf_profiles/.done:
 	@touch $@
 
 # --- database ---
+
+refresh:
+	rm -f data/dark_flaring.duckdb
+	$(MAKE) db
 
 db: data/dark_flaring.duckdb
 
