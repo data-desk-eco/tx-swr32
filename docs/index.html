@@ -20,21 +20,25 @@
       extract(year FROM date)::INTEGER AS year,
       round(avg(vnf_lat), 4) AS lat, round(avg(vnf_lon), 4) AS lon,
       COALESCE(operator_name, 'Unknown') AS operator,
+      confidence,
       count(*) AS detection_days, round(sum(rh_mw), 1) AS total_rh_mw
     FROM dark_flares WHERE is_dark
-    GROUP BY flare_id, year, operator
+    GROUP BY flare_id, year, operator, confidence
   </script>
 
   <script id="by_operator" output="byOperator" type="application/sql" database="../data/dark_flaring.duckdb" hidden>
-    SELECT COALESCE(operator_name, 'Unknown') AS operator,
-      count(DISTINCT flare_id) AS sites,
-      count(*) AS detection_days,
-      round(sum(rh_mw), 0) AS total_rh_mw,
-      count(DISTINCT CASE WHEN date >= '2023-10-01' THEN flare_id END) AS permit_era_sites,
-      sum(CASE WHEN date >= '2023-10-01' THEN 1 ELSE 0 END) AS permit_era_days,
-      round(sum(CASE WHEN date >= '2023-10-01' THEN rh_mw ELSE 0 END), 0) AS permit_era_rh_mw
-    FROM dark_flares WHERE is_dark
-    GROUP BY operator ORDER BY permit_era_rh_mw DESC
+    WITH ranked AS (
+      SELECT COALESCE(operator_name, 'Unknown') AS operator,
+        count(DISTINCT flare_id) AS sites,
+        count(*) AS detection_days,
+        round(sum(rh_mw), 0) AS rh_mw
+      FROM dark_flares WHERE is_dark
+        AND confidence IN ('sole', 'majority')
+      GROUP BY operator ORDER BY rh_mw DESC LIMIT 15
+    )
+    SELECT operator, 'Radiant heat (MW)' AS metric, rh_mw AS value FROM ranked
+    UNION ALL
+    SELECT operator, 'Detection-days' AS metric, detection_days AS value FROM ranked
   </script>
 
   <script id="quarterly" output="quarterly" type="application/sql" database="../data/dark_flaring.duckdb" hidden>
@@ -65,7 +69,7 @@
   <script id="header" type="text/markdown">
     # Dark flaring in the Permian Basin
 
-    Satellite flare detections ([VIIRS Nightfire](https://eogdata.mines.edu/products/vnf/)) matched to the nearest RRC well or [permitted flare location](https://webapps.rrc.state.tx.us/swr32/publicquery.xhtml), then checked against active SWR 32 exception permits. Upstream production sites only — midstream gas plants, compressor stations, and refineries excluded.
+    Satellite flare detections ([VIIRS Nightfire](https://eogdata.mines.edu/products/vnf/)) matched to [SWR 32 permitted flare locations](https://webapps.rrc.state.tx.us/swr32/publicquery.xhtml), then checked against active permit dates. Upstream production sites only — midstream gas plants, compressor stations, and refineries excluded.
 
     **${topFlares.length} dark flare sites** with **${d3.sum(topFlares, d => d.detection_days).toLocaleString()} detection-days** of unpermitted flaring since Q4 2023. **${Math.round(100 * (permitEra.find(d => d.is_dark)?.det_days ?? 0) / d3.sum(permitEra, d => d.det_days))}%** of detection-days at matched upstream sites lack a valid SWR 32 exception permit.
   </script>
@@ -97,7 +101,7 @@
           stroke: "#fff",
           strokeWidth: 0.5,
           tip: true,
-          title: d => `${d.operator}\n${d.detection_days} days, ${d.total_rh_mw} MW`
+          title: d => `${d.operator}${d.confidence === 'contested' ? ' (contested)' : ''}\n${d.detection_days} days, ${d.total_rh_mw} MW`
         })
       ]
     }));
@@ -106,21 +110,32 @@
   <script id="hr1" type="text/html"><hr></script>
 
   <script id="operator_header" type="text/markdown">
-    ## Top operators by unpermitted radiant heat
+    ## Top operators by unpermitted flaring
+
+    Operators attributed by matching dark flare sites to the nearest SWR 32 permit location. Sites where multiple operators have overlapping permit coverage are excluded (${d3.sum(byOperatorContested, d => d.sites)} contested sites, ${d3.sum(byOperatorContested, d => d.permit_era_days).toLocaleString()} detection-days).
+  </script>
+
+  <script id="by_operator_contested" output="byOperatorContested" type="application/sql" database="../data/dark_flaring.duckdb" hidden>
+    SELECT COALESCE(operator_name, 'Unknown') AS operator,
+      count(DISTINCT flare_id) AS sites,
+      sum(CASE WHEN date >= '2023-10-01' THEN 1 ELSE 0 END) AS permit_era_days,
+      round(sum(CASE WHEN date >= '2023-10-01' THEN rh_mw ELSE 0 END), 0) AS permit_era_rh_mw
+    FROM dark_flares WHERE is_dark AND confidence = 'contested'
+    GROUP BY operator ORDER BY permit_era_rh_mw DESC
   </script>
 
   <script id="operator_chart" type="module">
-    const top = byOperator.filter(d => d.permit_era_days > 0).slice(0, 15);
+    const sortOrder = [...new Set(byOperator.filter(d => d.metric === "Radiant heat (MW)").map(d => d.operator))];
     display(Plot.plot({
       width: 960,
       height: 400,
       marginLeft: 250,
-      x: {label: "Radiant heat since Q4 2023 (MW)", grid: true},
-      y: {label: null},
+      fx: {label: null, padding: 0.15, domain: ["Radiant heat (MW)", "Detection-days"]},
+      x: {label: null, grid: true},
+      y: {label: null, domain: sortOrder},
       color: {scheme: "YlOrRd", reverse: true, type: "log"},
       marks: [
-        Plot.barX(top, {y: "operator", x: "permit_era_rh_mw", fill: "permit_era_rh_mw", sort: {y: "-x"}, tip: true,
-          title: d => `${d.operator}\n${d.permit_era_sites} sites, ${d.permit_era_days.toLocaleString()} detection-days (permit era)\n${d.detection_days.toLocaleString()} total detection-days (all time)`}),
+        Plot.barX(byOperator, {fx: "metric", y: "operator", x: "value", fill: "value", tip: true}),
         Plot.ruleX([0])
       ]
     }));
