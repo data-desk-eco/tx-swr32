@@ -1,7 +1,12 @@
 INSTALL spatial; LOAD spatial;
 
--- SWR 32 exception permits
-CREATE TABLE IF NOT EXISTS permits (
+CREATE SCHEMA IF NOT EXISTS raw;
+
+-- ============================================================
+-- Raw tables (loaded from CSVs, minimal transformation)
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS raw.permits (
     excep_seq       VARCHAR,
     submittal_dt    VARCHAR,
     filing_no       VARCHAR,
@@ -13,14 +18,12 @@ CREATE TABLE IF NOT EXISTS permits (
     effective_dt    VARCHAR,
     expiration_dt   VARCHAR,
     fv_district     VARCHAR,
-    -- parsed from property field
     property_type   VARCHAR,
     lease_district  VARCHAR,
     lease_number    VARCHAR
 );
 
--- RRC wells (Permian only, with locations)
-CREATE TABLE IF NOT EXISTS wells (
+CREATE TABLE IF NOT EXISTS raw.wells (
     api             VARCHAR,
     oil_gas_code    VARCHAR,
     lease_district  VARCHAR,
@@ -32,15 +35,13 @@ CREATE TABLE IF NOT EXISTS wells (
     geom            GEOMETRY
 );
 
--- RRC operators
-CREATE TABLE IF NOT EXISTS operators (
+CREATE TABLE IF NOT EXISTS raw.operators (
     operator_number VARCHAR,
     operator_name   VARCHAR,
     status          VARCHAR
 );
 
--- Permitted flare/vent locations (scraped from SWR 32 detail pages)
-CREATE TABLE IF NOT EXISTS flare_locations (
+CREATE TABLE IF NOT EXISTS raw.flare_locations (
     filing_no       VARCHAR,
     name            VARCHAR,
     county          VARCHAR,
@@ -57,8 +58,7 @@ CREATE TABLE IF NOT EXISTS flare_locations (
     geom            GEOMETRY
 );
 
--- VNF daily flare detections (Permian)
-CREATE TABLE IF NOT EXISTS vnf (
+CREATE TABLE IF NOT EXISTS raw.vnf (
     flare_id    INTEGER,
     lat         DOUBLE,
     lon         DOUBLE,
@@ -71,8 +71,7 @@ CREATE TABLE IF NOT EXISTS vnf (
     geom        GEOMETRY
 );
 
--- Non-upstream facilities to exclude from VNF matching (EPA GHGRP)
-CREATE TABLE IF NOT EXISTS excluded_facilities (
+CREATE TABLE IF NOT EXISTS raw.excluded_facilities (
     facility_id     VARCHAR,
     facility_name   VARCHAR,
     sector          VARCHAR,
@@ -82,8 +81,7 @@ CREATE TABLE IF NOT EXISTS excluded_facilities (
     geom            GEOMETRY
 );
 
--- Methane plume detections (Carbon Mapper + IMEO)
-CREATE TABLE IF NOT EXISTS plumes (
+CREATE TABLE IF NOT EXISTS raw.plumes (
     plume_id        VARCHAR,
     source          VARCHAR,
     satellite       VARCHAR,
