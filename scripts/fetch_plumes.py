@@ -8,7 +8,8 @@ from pathlib import Path
 
 import httpx
 
-IMEO_GEOJSON = Path.home() / "Tools/firedamp/plumes_data/unep_methanedata_detected_plumes.geojson"
+IMEO_GEOJSON = Path("data/imeo_plumes.geojson")
+IMEO_URL = "https://methanedata.unep.org"
 
 # Permian Basin bounding box
 WEST, SOUTH, EAST, NORTH = -105, 30, -99.5, 33.5
@@ -60,7 +61,8 @@ def filter_imeo():
     out = Path("data/plumes_imeo.csv")
     out.parent.mkdir(parents=True, exist_ok=True)
     if not IMEO_GEOJSON.exists():
-        print(f"IMEO GeoJSON not found: {IMEO_GEOJSON}", file=sys.stderr)
+        print(f"IMEO GeoJSON not found at {IMEO_GEOJSON}", file=sys.stderr)
+        print(f"  Download from {IMEO_URL} and save as {IMEO_GEOJSON}", file=sys.stderr)
         with open(out, "w", newline="") as f:
             csv.writer(f).writerow(IMEO_FIELDS)
         return

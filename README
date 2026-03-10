@@ -39,7 +39,7 @@ Setup
 -----
 Requires: uv, duckdb CLI, Playwright (chromium)
 Optional: EOG account for VNF data (credentials in .env)
-Optional: IMEO GeoJSON at ~/Tools/firedamp/plumes_data/
+Optional: IMEO GeoJSON from methanedata.unep.org (save as data/imeo_plumes.geojson)
 
   uv sync
   uv run playwright install chromium

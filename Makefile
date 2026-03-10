@@ -1,7 +1,7 @@
 WORKERS ?= 32
 export WORKERS
 
-.PHONY: all build preview data db refresh permits rrc vnf plumes metadata documents download combine clean
+.PHONY: all build preview data db refresh permits rrc vnf plumes clean
 
 all: db
 
@@ -17,32 +17,15 @@ data:
 	gh release download data-v1 -p dark_flaring.duckdb.gz -D data --clobber
 	gunzip -f data/dark_flaring.duckdb.gz
 
-# --- SWR 32 scraper ---
-
-metadata: data/filings.csv
-documents: data/docs.csv
-download: data/pdfs/.done
-combine: data/swr32_exceptions.csv
-
-data/filings.csv:
-	./scrape.sh metadata
-
-data/docs.csv: data/filings.csv
-	./scrape.sh documents
-
-data/pdfs/.done: data/docs.csv
-	./scrape.sh download
-	@touch $@
-
-data/swr32_exceptions.csv: data/filings.csv data/docs.csv
-	./scrape.sh combine
-
-# --- dark flaring pipeline ---
+# --- scrapers ---
 
 permits: data/filings.csv
 rrc: data/wells.csv data/operators.csv
 vnf: data/vnf_profiles/.done
 plumes: data/plumes_cm.csv data/plumes_imeo.csv
+
+data/filings.csv:
+	uv run scripts/scrape_permits.py
 
 data/plumes_cm.csv data/plumes_imeo.csv:
 	uv run scripts/fetch_plumes.py

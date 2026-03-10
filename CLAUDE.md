@@ -4,7 +4,7 @@ Dark flaring analysis for the Permian Basin. Combines SWR 32 flaring permits, RR
 
 ## Layout
 
-- `scrape.sh` — SWR 32 permit scraper (bash, hits RRC web app)
+- `scripts/scrape_permits.py` — SWR 32 permit metadata scraper (paginates RRC web app)
 - `scripts/download_rrc.py` — downloads wellbore, P-4, and P-5 EBCDIC files from RRC MFT (Playwright)
 - `scripts/parse_rrc.py` — parses EBCDIC to `wells.csv` + `operators.csv` (three-pass streaming with P-4 operator lookup)
 - `scripts/fetch_vnf.py` — fetches VNF profiles from EOG (needs `.env` with EOG credentials)
@@ -23,7 +23,7 @@ Dark flaring analysis for the Permian Basin. Combines SWR 32 flaring permits, RR
 - **Spatial join**: matches VNF detections to nearest well within ~1km using `ST_DWithin` with a coarse bounding-box pre-filter.
 - **Permit matching**: spatial (via scraped flare location GPS) + operator-based (if well operator has any active permit in compatible district). Follows Earthworks "benefit of the doubt" methodology.
 - **Methane plumes**: Carbon Mapper (Tanager-1) + IMEO/MARS (multi-satellite). Fetched via API and filtered to Permian bbox. Matched to nearest well within 1km, cross-referenced with VNF ±1 day to classify as unlit/flaring/wellpad/unmatched.
-- **IMEO source**: GeoJSON from `~/Tools/firedamp/plumes_data/unep_methanedata_detected_plumes.geojson` (manual download from methanedata.unep.org).
+- **IMEO source**: `data/imeo_plumes.geojson` — manual download from methanedata.unep.org (no API available, 403s automated access).
 
 ## Commands
 
