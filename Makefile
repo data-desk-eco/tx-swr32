@@ -44,14 +44,6 @@ data/vnf_profiles/.done:
 	uv run scripts/fetch_vnf.py
 	@touch $@
 
-# --- parquet pre-processing ---
-
-data/vnf.parquet: data/vnf_profiles/.done queries/prep_vnf.sql
-	duckdb < queries/prep_vnf.sql
-
-data/gas_disposition.parquet: data/pdq/.done queries/prep_pdq.sql
-	duckdb < queries/prep_pdq.sql
-
 # --- database ---
 
 refresh:
@@ -60,12 +52,12 @@ refresh:
 
 db: data/dark_flaring.duckdb
 
-data/dark_flaring.duckdb: data/filings.csv data/wells.csv data/operators.csv data/vnf.parquet data/flare_locations.csv data/permit_details.csv data/permit_properties.csv data/excluded_facilities.csv data/plumes_cm.csv data/plumes_imeo.csv data/gas_disposition.parquet data/pdq/.done data/survALLp.shp queries/*.sql
+data/dark_flaring.duckdb: data/filings.csv data/wells.csv data/operators.csv data/vnf_profiles/.done data/flare_locations.csv data/permit_details.csv data/permit_properties.csv data/excluded_facilities.csv data/plumes_cm.csv data/plumes_imeo.csv data/pdq/.done data/survALLp.shp queries/*.sql
 	@rm -f $@
-	duckdb $@ < queries/schema.sql
 	duckdb $@ < queries/load.sql
-	duckdb $@ < queries/transform.sql
-	duckdb $@ < queries/views.sql
+	duckdb $@ < queries/rrc.sql
+	duckdb $@ < queries/flaring.sql
+	duckdb $@ < queries/export.sql
 	@echo "Database ready: $@"
 
 # --- web app ---
@@ -81,14 +73,14 @@ serve:
 	python3 -m http.server 8080 -d web
 
 clean:
-	rm -f data/dark_flaring.duckdb data/wells.csv data/operators.csv data/.rrc_downloaded data/plumes_cm.csv data/plumes_imeo.csv data/vnf.parquet data/gas_disposition.parquet
+	rm -f data/dark_flaring.duckdb data/wells.csv data/operators.csv data/.rrc_downloaded data/plumes_cm.csv data/plumes_imeo.csv
 
 help:
 	@echo "gaslight — dark flaring analysis for the Permian Basin"
 	@echo ""
-	@echo "  make db              Full pipeline (schema → load → transform → views)"
+	@echo "  make db              Full pipeline (load → rrc → flaring → export)"
 	@echo "  make refresh         Rebuild database from scratch"
-	@echo "  make export          Export parquets for web app"
+	@echo "  make export          Re-export parquets for web app"
 	@echo "  make vendor          Download vendored JS dependencies"
 	@echo "  make serve           Dev server on :8080"
 	@echo ""
