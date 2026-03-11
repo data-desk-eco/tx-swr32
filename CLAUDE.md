@@ -17,7 +17,7 @@ Dark flaring analysis for the Permian Basin. Matches VIIRS Nightfire satellite f
 
 ## Key details
 
-- **Methodology**: each VNF flare site is matched to the nearest SWR 32 permit location within 1.5km. Operator attributed from the permit filing. For each detection-day, if any nearby permit covers the date, it's "permitted"; otherwise "dark". Sites near multiple operators' permits are flagged as "contested" and excluded from operator rankings.
+- **Methodology**: each VNF flare site is matched to the nearest SWR 32 permit location within 1km. Operator attributed from the permit filing. For each detection-day, if any nearby permit covers the date, it's "permitted"; otherwise "dark". Sites near multiple operators' permits are flagged as "contested" and excluded from operator rankings.
 - **Attribution confidence**: `sole` (only one operator nearby), `majority` (attributed operator has >50% of nearby permits), `contested` (multiple operators, none dominant). Operator chart filters to sole+majority.
 - **VNF load**: uses `all_varchar=true` instead of `auto_detect` on the 1,700 profile CSVs — much faster.
 - **Exclusions**: non-upstream facilities (EPA GHGRP gas plants, compressor stations, refineries) within 1.5km flagged on `flare_sites.near_excluded_facility`. Gas Plant permits excluded in `flare_locations` (transform layer).

@@ -143,6 +143,70 @@
 
   <script id="hr2" type="text/html"><hr></script>
 
+  <script id="reported_flaring_q" output="reportedFlaring" type="application/sql" database="../data/dark_flaring.duckdb" hidden>
+    SELECT date_trunc('quarter', month)::VARCHAR AS quarter,
+      round(sum(total_flared_mcf) / 1e3, 0) AS flared_mmcf,
+      count(DISTINCT lease_no) AS leases
+    FROM reported_flaring_permit_check
+    WHERE district IN ('7B','7C','08','8A')
+    GROUP BY 1 ORDER BY 1
+  </script>
+
+  <script id="reported_stats" output="reportedStats" type="application/sql" database="../data/dark_flaring.duckdb" hidden>
+    SELECT round(sum(total_flared_mcf) / 1e6, 0) AS total_bcf,
+      count(DISTINCT lease_no) AS leases,
+      round(count(CASE WHEN has_active_permit THEN 1 END) * 100.0 / count(*), 2) AS pct_permitted
+    FROM reported_flaring_permit_check
+    WHERE district IN ('7B','7C','08','8A')
+  </script>
+
+  <script id="top_flarers_q" output="topFlarers" type="application/sql" database="../data/dark_flaring.duckdb" hidden>
+    SELECT operator_name AS operator, district,
+      leases, total_flared_mcf,
+      round(avg_flare_rate * 100, 1) AS flare_pct
+    FROM top_unpermitted_flarers LIMIT 15
+  </script>
+
+  <script id="reported_header" type="text/markdown">
+    ## Self-reported flaring without permits
+
+    Operators report gas flared or vented each month in [RRC production reports](https://www.rrc.texas.gov/oil-and-gas/research-and-statistics/production-data/). Cross-referencing against active SWR 32 exception permits: **${reportedStats[0].pct_permitted}%** of ${reportedStats[0].leases.toLocaleString()} flaring lease-months in the Permian have an active permit. The median SWR 32 permit lasts just **10 days**.
+  </script>
+
+  <script id="reported_chart" type="module">
+    display(Plot.plot({
+      title: "Reported gas flared in the Permian Basin (MMcf/quarter)",
+      width: 960,
+      height: 350,
+      x: {label: null, type: "band"},
+      y: {label: "Gas flared (MMcf)", grid: true},
+      marks: [
+        Plot.barY(reportedFlaring, {
+          x: d => d.quarter.slice(0, 7),
+          y: "flared_mmcf",
+          fill: "#e25822",
+          tip: {format: {x: d => d, y: d => d3.format(",.0f")(d) + " MMcf"}}
+        }),
+        Plot.ruleY([0])
+      ]
+    }));
+  </script>
+
+  <script id="flarers_header" type="text/markdown">
+    Top Permian operators reporting flaring without an active SWR 32 permit (Q4 2023 onward):
+  </script>
+
+  <script id="flarers_table" type="module">
+    display(Inputs.table(topFlarers, {
+      columns: ["operator", "district", "leases", "total_flared_mcf", "flare_pct"],
+      header: {operator: "Operator", district: "District", leases: "Leases", total_flared_mcf: "Total flared (Mcf)", flare_pct: "Flare rate (%)"},
+      format: {total_flared_mcf: d => d3.format(",.0f")(d)},
+      rows: 15
+    }));
+  </script>
+
+  <script id="hr3" type="text/html"><hr></script>
+
   <script id="trend_header" type="text/markdown">
     ## Quarterly trend
     Approved SWR 32 permits in our data begin in Q4 2023. Since then, **${Math.round(100 * (permitEra.find(d => d.is_dark)?.det_days ?? 0) / d3.sum(permitEra, d => d.det_days))}%** of detection-days at matched upstream sites remain unpermitted.

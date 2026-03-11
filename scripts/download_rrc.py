@@ -8,6 +8,7 @@ DATASETS = {
     "dbf900.ebc.gz": "b070ce28-5c58-4fe2-9eb7-8b70befb7af9",  # Wellbore
     "p4f606.ebc.gz": "19f9b9c7-2b82-4d7c-8dbd-77145a86d3de",  # P-4 Schedule
     "orf850.ebc.gz": "04652169-eed6-4396-9019-2e270e790f6c",  # P-5 Org
+    "PDQ_DSV.zip": "1f5ddb8d-329a-4459-b7f8-177b4f5ee60d",    # Production Data Query
 }
 
 
@@ -23,7 +24,8 @@ def download(out_dir: Path, filename: str):
         page = browser.new_page(viewport={"width": 1280, "height": 1200})
         page.goto(f"https://mft.rrc.texas.gov/link/{link_id}", wait_until="networkidle")
         # Click the filename link directly to trigger download
-        with page.expect_download(timeout=300_000) as dl:
+        timeout = 1_800_000 if "PDQ" in filename else 300_000  # 30min for PDQ (3.4GB)
+        with page.expect_download(timeout=timeout) as dl:
             page.get_by_text(filename, exact=True).click()
         dl.value.save_as(str(out_path))
         browser.close()

@@ -33,6 +33,7 @@ WITH matched AS (
         AND (spc.expiration_dt IS NULL OR spc.expiration_dt >= v.date)
     WHERE v.detected
       AND NOT fs.near_excluded_facility
+      AND v.date >= (SELECT MIN(TRY_STRPTIME(submittal_dt, '%m/%d/%Y'))::DATE FROM raw.permits)
 )
 SELECT * EXCLUDE (rn) FROM matched WHERE rn = 1;
 
@@ -119,6 +120,95 @@ SELECT plume_id, date, latitude, longitude, emission_rate, emission_uncertainty,
 FROM plume_attributed
 WHERE classification = 'unlit'
 ORDER BY emission_rate DESC;
+
+-- ============================================================
+-- Reported flaring analysis (from production reports)
+-- ============================================================
+
+-- Reported flaring by lease-month, matched to SWR 32 permits via lease number
+-- A lease that reports flaring but has no active SWR 32 permit = regulatory gap
+CREATE OR REPLACE VIEW reported_flaring_permit_check AS
+SELECT
+    rf.district,
+    rf.lease_no,
+    rf.month_date::DATE AS month,
+    rf.operator_name,
+    rf.lease_name,
+    rf.total_flared_mcf,
+    rf.total_gas_prod_mcf,
+    rf.total_flared_mcf * 1.0 / NULLIF(rf.total_gas_prod_mcf, 0) AS flare_rate,
+    EXISTS (
+        SELECT 1 FROM permit_lease_map plm
+        JOIN raw.permits p ON p.filing_no = plm.filing_no
+        LEFT JOIN raw.permit_details pd ON pd.filing_no = plm.filing_no
+        WHERE plm.lease_district = rf.district
+          AND LPAD(plm.lease_number, 6, '0') = LPAD(rf.lease_no, 6, '0')
+          AND COALESCE(pd.exception_status, p.status) IN ('Approved', 'Submitted', 'Hearing Pending', 'Resubmitted')
+          AND COALESCE(
+              TRY_STRPTIME(pd.requested_effective_date, '%m/%d/%Y'),
+              TRY_STRPTIME(p.effective_dt, '%m/%d/%Y')
+          )::DATE <= rf.month_date::DATE
+          AND (
+              COALESCE(
+                  TRY_STRPTIME(pd.requested_expiration_date, '%m/%d/%Y'),
+                  TRY_STRPTIME(p.expiration_dt, '%m/%d/%Y')
+              )::DATE IS NULL
+              OR COALESCE(
+                  TRY_STRPTIME(pd.requested_expiration_date, '%m/%d/%Y'),
+                  TRY_STRPTIME(p.expiration_dt, '%m/%d/%Y')
+              )::DATE >= rf.month_date::DATE
+          )
+    ) AS has_active_permit
+FROM reported_flaring rf
+WHERE rf.total_flared_mcf > 0
+  AND rf.year >= 2021;
+
+-- Summary: reported flaring volumes with/without permits
+CREATE OR REPLACE VIEW reported_flaring_summary AS
+SELECT
+    year, district,
+    count(*) AS lease_months,
+    count(CASE WHEN has_active_permit THEN 1 END) AS with_permit,
+    count(CASE WHEN NOT has_active_permit THEN 1 END) AS without_permit,
+    round(sum(total_flared_mcf), 0) AS total_flared_mcf,
+    round(sum(CASE WHEN has_active_permit THEN total_flared_mcf ELSE 0 END), 0) AS permitted_flared_mcf,
+    round(sum(CASE WHEN NOT has_active_permit THEN total_flared_mcf ELSE 0 END), 0) AS unpermitted_flared_mcf
+FROM (
+    SELECT *, EXTRACT(YEAR FROM month) AS year
+    FROM reported_flaring_permit_check
+)
+GROUP BY year, district
+ORDER BY year, district;
+
+-- Top reported flarers without permits (Permian, recent)
+CREATE OR REPLACE VIEW top_unpermitted_flarers AS
+SELECT
+    operator_name,
+    district,
+    count(DISTINCT lease_no) AS leases,
+    count(*) AS lease_months,
+    round(sum(total_flared_mcf), 0) AS total_flared_mcf,
+    round(avg(flare_rate), 3) AS avg_flare_rate
+FROM reported_flaring_permit_check
+WHERE NOT has_active_permit
+  AND district IN ('7B', '7C', '08', '8A')
+  AND month >= '2023-10-01'
+GROUP BY operator_name, district
+ORDER BY total_flared_mcf DESC;
+
+-- ============================================================
+-- Permit property coverage
+-- ============================================================
+
+CREATE OR REPLACE VIEW permit_coverage_summary AS
+SELECT
+    count(DISTINCT plm.filing_no) AS filings_with_leases,
+    count(DISTINCT plm.lease_district || '-' || plm.lease_number) AS unique_leases,
+    count(DISTINCT spw.filing_no) AS filings_with_wells,
+    count(DISTINCT spw.api) AS wells_linked,
+    count(DISTINCT spw.flare_id) AS sites_with_well_links
+FROM permit_lease_map plm
+LEFT JOIN site_permit_wells spw USING (filing_no);
 
 CREATE OR REPLACE VIEW top_plume_operators AS
 SELECT COALESCE(operator_name, 'Unknown') AS operator,

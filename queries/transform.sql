@@ -5,7 +5,7 @@ LOAD spatial;
 -- ============================================================
 
 -- Match radii
-SET VARIABLE permit_radius = 0.015;   -- 1.5km for VNF ↔ permit location
+SET VARIABLE permit_radius = 0.01;    -- 1km for VNF ↔ permit location
 SET VARIABLE plume_radius = 0.01;     -- 1km for plume ↔ well/VNF
 
 -- Flare sites: one row per VNF site with exclusion flag
@@ -36,13 +36,29 @@ FROM (
 
 CREATE INDEX IF NOT EXISTS idx_flare_sites_geom ON flare_sites USING RTREE (geom);
 
--- Upstream flare locations (exclude Gas Plant permits)
+-- Upstream flare locations (exclude Gas Plant permits and Gas Plant facility types)
 CREATE OR REPLACE TABLE flare_locations AS
 SELECT fl.*
 FROM raw.flare_locations fl
 WHERE fl.filing_no::VARCHAR NOT IN (
     SELECT filing_no FROM raw.permits WHERE property_type = 'Gas Plant'
-);
+)
+AND COALESCE(fl.facility_type, '') NOT ILIKE '%gas plant%';
+
+-- Permit lease map: flatten permit_properties to all underlying leases per filing
+-- For commingle permits, this maps the commingle filing to its oil/gas leases
+-- For non-commingle filings, this maps the filing to its single lease
+CREATE OR REPLACE TABLE permit_lease_map AS
+SELECT
+    pp.filing_no,
+    pp.property_type,
+    pp.district AS lease_district,
+    pp.property_id AS lease_number,
+    pp.lease_name,
+    pp.requested_release_rate_mcf_day
+FROM raw.permit_properties pp
+WHERE pp.property_type IN ('Oil Lease', 'Gas Lease', 'Drilling Permit')
+  AND pp.property_id IS NOT NULL AND pp.property_id != '';
 
 CREATE INDEX IF NOT EXISTS idx_flare_locations_geom ON flare_locations USING RTREE (geom);
 
@@ -65,6 +81,7 @@ JOIN flare_locations fl ON fl.geom IS NOT NULL
 WHERE NOT f.near_excluded_facility;
 
 -- Permit coverage: which permits cover which sites, with parsed dates
+-- Uses permit_details when available for richer metadata, falls back to raw.permits
 -- Includes Submitted/Hearing Pending (benefit of the doubt per Earthworks methodology)
 CREATE OR REPLACE TABLE site_permit_coverage AS
 SELECT
@@ -72,18 +89,28 @@ SELECT
     sm.filing_no,
     sm.distance_km,
     sm.rank,
-    p.operator_name,
+    COALESCE(pd.operator, p.operator_name) AS operator_name,
     p.operator_no,
     p.property,
     p.property_type,
     p.lease_district,
     p.lease_number,
-    p.status AS permit_status,
-    TRY_STRPTIME(p.effective_dt, '%m/%d/%Y')::DATE AS effective_dt,
-    TRY_STRPTIME(p.expiration_dt, '%m/%d/%Y')::DATE AS expiration_dt
+    COALESCE(pd.exception_status, p.status) AS permit_status,
+    COALESCE(
+        TRY_STRPTIME(pd.requested_effective_date, '%m/%d/%Y'),
+        TRY_STRPTIME(p.effective_dt, '%m/%d/%Y')
+    )::DATE AS effective_dt,
+    COALESCE(
+        TRY_STRPTIME(pd.requested_expiration_date, '%m/%d/%Y'),
+        TRY_STRPTIME(p.expiration_dt, '%m/%d/%Y')
+    )::DATE AS expiration_dt,
+    pd.filing_type,
+    pd.site_name,
+    pd.exception_reasons
 FROM site_permit_matches sm
 JOIN raw.permits p ON p.filing_no = sm.filing_no
-WHERE p.status IN ('Approved', 'Submitted', 'Hearing Pending', 'Resubmitted')
+LEFT JOIN raw.permit_details pd ON pd.filing_no = sm.filing_no
+WHERE COALESCE(pd.exception_status, p.status) IN ('Approved', 'Submitted', 'Hearing Pending', 'Resubmitted')
   AND p.property_type != 'Gas Plant';
 
 -- Operator attribution per site (from nearest permit location)
@@ -125,6 +152,64 @@ SELECT
     END AS confidence
 FROM nearest n
 LEFT JOIN agg a USING (flare_id);
+
+-- ============================================================
+-- Reported flaring from production reports (PDQ disposition data)
+-- ============================================================
+
+-- PDQ district_no → RRC district ID mapping
+CREATE OR REPLACE TABLE pdq_district_map AS
+SELECT * FROM (VALUES
+    ('01', '01'), ('02', '02'), ('03', '03'), ('04', '04'),
+    ('05', '05'), ('06', '06'), ('07', '6E'), ('08', '7B'),
+    ('09', '7C'), ('10', '08'), ('11', '8A'), ('12', '8B'),
+    ('13', '09'), ('14', '10')
+) AS t(pdq_district, rrc_district);
+
+-- Monthly reported flaring by lease, with district mapping
+CREATE OR REPLACE TABLE reported_flaring AS
+SELECT
+    gd.oil_gas_code,
+    dm.rrc_district AS district,
+    gd.lease_no,
+    gd.cycle_year || '-' || LPAD(gd.cycle_month, 2, '0') || '-01' AS month_date,
+    gd.cycle_year::INT AS year,
+    gd.cycle_month::INT AS month,
+    gd.operator_no,
+    gd.operator_name,
+    gd.lease_name,
+    gd.field_name,
+    COALESCE(gd.lease_gas_dispcd04_vol, 0) AS gas_flared_mcf,
+    COALESCE(gd.lease_csgd_dispcde04_vol, 0) AS csgd_flared_mcf,
+    COALESCE(gd.lease_gas_dispcd04_vol, 0) + COALESCE(gd.lease_csgd_dispcde04_vol, 0) AS total_flared_mcf,
+    COALESCE(gd.lease_gas_total_vol, 0) + COALESCE(gd.lease_csgd_total_vol, 0) AS total_gas_prod_mcf
+FROM raw.gas_disposition gd
+LEFT JOIN pdq_district_map dm ON dm.pdq_district = gd.district_no;
+
+-- ============================================================
+-- Permit ↔ well linkage via lease numbers
+-- ============================================================
+
+-- For each permit matched to a flare site, find wells on its leases
+-- This resolves commingle permits: filing → underlying leases → wells
+CREATE OR REPLACE TABLE site_permit_wells AS
+SELECT DISTINCT
+    spc.flare_id,
+    spc.filing_no,
+    plm.lease_district,
+    plm.lease_number,
+    plm.lease_name,
+    plm.property_type AS lease_type,
+    w.api,
+    w.well_number,
+    w.operator_no AS well_operator_no,
+    w.latitude AS well_lat,
+    w.longitude AS well_lon
+FROM site_permit_coverage spc
+JOIN permit_lease_map plm ON plm.filing_no = spc.filing_no
+JOIN raw.wells w ON w.lease_district = plm.lease_district
+    AND LPAD(w.lease_number, 6, '0') = LPAD(plm.lease_number, 6, '0')
+WHERE w.latitude != 0 AND w.longitude != 0;
 
 -- ============================================================
 -- Spatial matching: plumes ↔ wells and VNF sites

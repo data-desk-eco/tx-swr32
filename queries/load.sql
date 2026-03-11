@@ -18,11 +18,53 @@ FROM read_csv('data/wells.csv', header=true, auto_detect=true);
 INSERT INTO raw.operators
 SELECT * FROM read_csv('data/operators.csv', header=true, auto_detect=true);
 
+-- Permit details (filing metadata from detail pages)
+INSERT INTO raw.permit_details
+SELECT * FROM read_csv('data/permit_details.csv', header=true, all_varchar=true);
+
+-- Permit properties (leases/permits per filing from detail pages)
+INSERT INTO raw.permit_properties
+SELECT * FROM read_csv('data/permit_properties.csv', header=true, all_varchar=true);
+
 -- Flare locations (all permitted flare GPS coordinates, including Gas Plant)
 INSERT INTO raw.flare_locations
 SELECT fl.*, CASE WHEN fl.latitude != 0 AND fl.longitude != 0
                   THEN ST_Point(fl.longitude, fl.latitude) END
 FROM read_csv('data/flare_locations.csv', header=true, auto_detect=true) fl;
+
+-- PDQ: lease-level gas disposition (vented/flared volumes)
+-- Only load rows where gas was flared/vented (DISPCD04 > 0) or casinghead gas flared (DISPCDE04 > 0)
+-- District mapping: 08=7B, 09=7C, 10=08, 11=8A, 13=09, 14=10
+INSERT INTO raw.gas_disposition
+SELECT
+    OIL_GAS_CODE, DISTRICT_NO, LEASE_NO, CYCLE_YEAR, CYCLE_MONTH,
+    OPERATOR_NO, FIELD_NO,
+    NULLIF(LEASE_GAS_DISPCD04_VOL, '')::DOUBLE,
+    NULLIF(LEASE_CSGD_DISPCDE04_VOL, '')::DOUBLE,
+    COALESCE(NULLIF(LEASE_GAS_DISPCD01_VOL,'')::DOUBLE,0) + COALESCE(NULLIF(LEASE_GAS_DISPCD02_VOL,'')::DOUBLE,0)
+      + COALESCE(NULLIF(LEASE_GAS_DISPCD03_VOL,'')::DOUBLE,0) + COALESCE(NULLIF(LEASE_GAS_DISPCD04_VOL,'')::DOUBLE,0)
+      + COALESCE(NULLIF(LEASE_GAS_DISPCD05_VOL,'')::DOUBLE,0) + COALESCE(NULLIF(LEASE_GAS_DISPCD06_VOL,'')::DOUBLE,0)
+      + COALESCE(NULLIF(LEASE_GAS_DISPCD07_VOL,'')::DOUBLE,0) + COALESCE(NULLIF(LEASE_GAS_DISPCD08_VOL,'')::DOUBLE,0)
+      + COALESCE(NULLIF(LEASE_GAS_DISPCD09_VOL,'')::DOUBLE,0) + COALESCE(NULLIF(LEASE_GAS_DISPCD99_VOL,'')::DOUBLE,0),
+    COALESCE(NULLIF(LEASE_CSGD_DISPCDE01_VOL,'')::DOUBLE,0) + COALESCE(NULLIF(LEASE_CSGD_DISPCDE02_VOL,'')::DOUBLE,0)
+      + COALESCE(NULLIF(LEASE_CSGD_DISPCDE03_VOL,'')::DOUBLE,0) + COALESCE(NULLIF(LEASE_CSGD_DISPCDE04_VOL,'')::DOUBLE,0)
+      + COALESCE(NULLIF(LEASE_CSGD_DISPCDE05_VOL,'')::DOUBLE,0) + COALESCE(NULLIF(LEASE_CSGD_DISPCDE06_VOL,'')::DOUBLE,0)
+      + COALESCE(NULLIF(LEASE_CSGD_DISPCDE07_VOL,'')::DOUBLE,0) + COALESCE(NULLIF(LEASE_CSGD_DISPCDE08_VOL,'')::DOUBLE,0)
+      + COALESCE(NULLIF(LEASE_CSGD_DISPCDE99_VOL,'')::DOUBLE,0),
+    DISTRICT_NAME, LEASE_NAME, OPERATOR_NAME, FIELD_NAME
+FROM read_csv('data/pdq/OG_LEASE_CYCLE_DISP_DATA_TABLE.dsv',
+    delim='}', header=true, all_varchar=true, ignore_errors=true)
+WHERE (NULLIF(LEASE_GAS_DISPCD04_VOL, '') IS NOT NULL AND LEASE_GAS_DISPCD04_VOL != '0')
+   OR (NULLIF(LEASE_CSGD_DISPCDE04_VOL, '') IS NOT NULL AND LEASE_CSGD_DISPCDE04_VOL != '0');
+
+-- PDQ: lease summary master (for lease name/operator lookups)
+INSERT INTO raw.pdq_leases
+SELECT
+    OIL_GAS_CODE, DISTRICT_NO, LEASE_NO, OPERATOR_NO, FIELD_NO,
+    DISTRICT_NAME, LEASE_NAME, OPERATOR_NAME, FIELD_NAME,
+    CYCLE_YEAR_MONTH_MIN::VARCHAR, CYCLE_YEAR_MONTH_MAX::VARCHAR
+FROM read_csv('data/pdq/OG_SUMMARY_MASTER_LARGE_DATA_TABLE.dsv',
+    delim='}', header=true, all_varchar=true, ignore_errors=true);
 
 -- VNF: read profiles with explicit types (avoids auto_detect on 1700 files)
 -- Filter to permit era (Q4 2023+) and nighttime (sunlit=0)
