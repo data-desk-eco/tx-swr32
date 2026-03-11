@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Permian Basin flaring monitor</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ccircle cx=%2250%22 cy=%2250%22 r=%2240%22 fill=%22%23e74c3c%22/%3E%3C/svg%3E">
+    <link rel="stylesheet" href="vendor/fonts/inter.css">
+    <link rel="stylesheet" href="vendor/maplibre-gl.css">
+    <link rel="stylesheet" href="style.css">
+    <script type="importmap">
+    {
+        "imports": {
+            "/npm/apache-arrow@17.0.0/+esm": "./vendor/duckdb/apache-arrow.mjs",
+            "/npm/tslib@2.6.3/+esm":         "./vendor/duckdb/tslib.mjs",
+            "/npm/flatbuffers@24.3.25/+esm":  "./vendor/duckdb/flatbuffers.mjs"
+        }
+    }
+    </script>
+</head>
+<body>
+    <div id="map"></div>
+
+    <div class="panel glass left-panel" id="left-panel">
+        <div class="panel-header">
+            <h1>Permian flaring</h1>
+            <span class="collapse-toggle" id="collapse-toggle"><svg width="12" height="12" viewBox="0 0 12 12"><polyline points="2,8 6,4 10,8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+        </div>
+        <p class="subtitle">Dark flaring monitor</p>
+
+        <div class="panel-body">
+            <div class="separator"></div>
+            <div class="stats">
+                <div class="stat-row"><span class="stat-label">Flare sites</span><span class="stat-value" id="stat-sites">--</span></div>
+                <div class="stat-row"><span class="stat-label">Dark rate</span><span class="stat-value" id="stat-dark-rate">--</span></div>
+                <div class="stat-row"><span class="stat-label">Satellite MW</span><span class="stat-value" id="stat-mw">--</span></div>
+            </div>
+
+            <div class="separator"></div>
+            <div class="filter-group">
+                <div class="toggle-row" data-layer="flares">
+                    <span class="filter-label">Flare sites</span>
+                    <input type="checkbox" checked>
+                </div>
+<div class="toggle-row" data-layer="permits">
+                    <span class="filter-label">Permit locations</span>
+                    <input type="checkbox">
+                </div>
+                <div class="toggle-row" data-layer="plumes">
+                    <span class="filter-label">Methane plumes</span>
+                    <input type="checkbox">
+                </div>
+            </div>
+
+            <div class="separator"></div>
+            <div class="toggle-row" id="dark-only-toggle">
+                <span class="filter-label">Dark flares only</span>
+                <input type="checkbox">
+            </div>
+
+            <div class="filter-group">
+                <input type="text" class="operator-search" id="operator-search" placeholder="Filter by operator...">
+            </div>
+        </div>
+    </div>
+
+    <div class="panel glass right-panel hidden" id="detail-panel">
+        <div class="detail-header">
+            <div class="detail-header-text">
+                <span class="detail-id" id="detail-title"></span>
+                <span class="detail-coords" id="detail-coords"></span>
+            </div>
+            <button class="close-btn" id="detail-close">&times;</button>
+        </div>
+        <div id="detail-body"></div>
+    </div>
+
+    <div class="panel glass legend" id="legend">
+        <div class="legend-header">
+            <h4 class="label-sm"><span class="legend-title-expanded">Legend</span><span class="legend-title-collapsed">Legend</span></h4>
+            <span class="legend-collapse" id="legend-collapse"><svg width="12" height="12" viewBox="0 0 12 12"><polyline points="2,4 6,8 10,4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+        </div>
+        <div class="legend-body">
+            <div class="legend-item"><span class="legend-src-wrap"><span class="legend-circle-fill" style="background: #ff6b35;"></span></span>Dark flare</div>
+            <div class="legend-item"><span class="legend-src-wrap"><span class="legend-circle-fill" style="background: #2ecc71;"></span></span>Permitted flare</div>
+            <div class="legend-item"><span class="legend-src-wrap"><span class="legend-circle-fill" style="background: #666;"></span></span>Near excluded facility</div>
+            <div class="legend-item" id="legend-permits" style="display:none"><span class="legend-src-wrap"><span class="legend-circle-fill" style="background: #3498db;"></span></span>Permit location</div>
+            <div class="legend-item" id="legend-plumes-flaring" style="display:none"><span class="legend-src-wrap"><span class="legend-circle-fill" style="background: #f39c12;"></span></span>Plume (flaring)</div>
+            <div class="legend-item" id="legend-plumes-unlit" style="display:none"><span class="legend-src-wrap"><span class="legend-circle-fill" style="background: #e67e22;"></span></span>Plume (unlit)</div>
+            <div class="legend-item" id="legend-plumes-other" style="display:none"><span class="legend-src-wrap"><span class="legend-circle-fill" style="background: #9b59b6;"></span></span>Plume (wellpad)</div>
+        </div>
+    </div>
+
+    <script src="vendor/maplibre-gl.js"></script>
+    <script type="module" src="app.js"></script>
+</body>
+</html>

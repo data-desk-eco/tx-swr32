@@ -158,8 +158,7 @@
 
     **Reported flaring volumes** come from PDQ production reports (disposition code 04 = vented/flared). Unpermitted volumes are estimated by pro-rating monthly reported volumes by the fraction of that month not covered by any active SWR 32 permit on the lease.
 
-    **Lease matching** uses spatial containment: VNF sites within lease footprints derived from Original Texas Land Survey (OTLS) polygons. Each well is spatial-joined to its containing OTLS survey; survey polygons are then unioned per lease to produce boundaries. Vertically stacked leases (different depth intervals on the same surface tract) share surface geometry. `permit_lease_map` is used separately to calculate per-lease permit coverage, not for VNF-to-lease assignment.
-
+    **Lease matching** uses spatial containment: VNF sites within lease footprints derived from Original Texas Land Survey (OTLS) polygons. Each well is spatial-joined to its containing OTLS survey; survey polygons are then unioned per lease to produce boundaries. Vertically stacked leases (different depth intervals on the same surface tract) share surface geometry.
     **Methane plumes** from Carbon Mapper and IMEO satellites are matched to wells and VNF sites within 1 km. Plumes near a VNF site are classified as "flaring" (if VIIRS detects a flare that day), "unlit" (VNF site present but no detection, indicating venting), or "wellpad" (near wells but no known flare).
 
     The 85% dark flaring rate in this analysis is consistent with Earthworks' finding of 69-84% unpermitted flares from direct helicopter surveys (2021), and with the RRC's own acknowledgment that the majority of observed flares lack permits.

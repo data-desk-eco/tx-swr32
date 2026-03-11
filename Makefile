@@ -1,7 +1,7 @@
 WORKERS ?= 32
 export WORKERS
 
-.PHONY: all build preview data db refresh permits permit-details rrc vnf plumes clean
+.PHONY: all build preview data db refresh permits permit-details rrc vnf plumes clean map-data map-vendor map-serve
 
 all: db
 
@@ -84,3 +84,16 @@ data/dark_flaring.duckdb: data/filings.csv data/wells.csv data/operators.csv dat
 clean:
 	rm -f data/dark_flaring.duckdb data/wells.csv data/operators.csv data/.rrc_downloaded data/plumes_cm.csv data/plumes_imeo.csv data/vnf.parquet data/gas_disposition.parquet
 	rm -rf docs/.observable/dist
+
+# --- map ---
+
+map-data: data/dark_flaring.duckdb queries/export.sql
+	mkdir -p web/data
+	duckdb data/dark_flaring.duckdb < queries/export.sql
+	@echo "Map data exported to web/data/"
+
+map-vendor:
+	scripts/vendor.sh
+
+map-serve:
+	python3 -m http.server 8080 -d web
