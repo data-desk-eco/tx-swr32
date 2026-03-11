@@ -13,6 +13,8 @@ Dark flaring analysis for the Permian Basin. Matches VIIRS Nightfire satellite f
 - `scripts/fetch_plumes.py` — fetches Carbon Mapper + IMEO methane plume data
 - `queries/load.sql` → `rrc.sql` → `flaring.sql` → `export.sql` — layered SQL pipeline
 - `web/` — interactive map (MapLibre GL + DuckDB WASM, zero npm deps)
+- `web/enhance.js` — Sentinel-2 "Enhance" feature (spawns s2-flares worker for single-flare deep analysis)
+- `web/vendor/s2-flares/` — shared Sentinel-2 detection library (git submodule)
 
 ## Architecture
 
@@ -32,6 +34,7 @@ Pipeline: `load → rrc → flaring → export`
 4. **Operator attribution**: combined evidence from permits and wells within pixel radius. Prefers operators with permit filings, then most evidence (wells + permits), then closest distance. Confidence: `sole`/`majority`/`contested`.
 5. **Exclusions**: EPA GHGRP non-upstream facilities within 1.5km; Gas Plant permits filtered out.
 6. **Plume attribution**: Carbon Mapper + IMEO methane plumes matched to wells and VNF sites within 1km. Classified as flaring/unlit/wellpad/unmatched.
+7. **Sentinel-2 enhancement**: Per-flare deep analysis using s2-flares library. Searches Sentinel-2 archive (last year) over a 750m bbox, runs detection at 20m resolution, clusters results. Accessed via "Enhance with Sentinel-2" button in flare detail panel.
 
 ## Key details
 

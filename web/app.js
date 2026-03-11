@@ -189,17 +189,24 @@ function addLayers() {
     });
 
     // Sentinel-2 detection points (visible during/after enhance)
+    // Styled like VNF flares: hollow circles scaled by intensity
+    const s2ColorRamp = [
+        'interpolate', ['linear'],
+        ['coalesce', ['get', 'max_b12'], 0],
+        0.3, '#660800', 0.5, '#991100', 0.7, '#cc2200', 0.9, '#ff4422', 1.2, '#ff8844', 1.5, '#ffcc44'
+    ];
     map.addLayer({
         id: 's2-points',
         type: 'circle',
         source: 's2-detections',
         paint: {
-            'circle-radius': ['interpolate', ['linear'], ['get', 'max_b12'],
-                0.5, 4, 1.0, 6, 1.5, 8],
-            'circle-color': ['interpolate', ['linear'], ['get', 'max_b12'],
-                0.5, '#ffaa00', 0.8, '#ff6600', 1.0, '#ff2200', 1.5, '#ffffff'],
-            'circle-stroke-width': 1,
-            'circle-stroke-color': 'rgba(255,255,255,0.5)',
+            'circle-radius': ['interpolate', ['linear'],
+                ['coalesce', ['get', 'max_b12'], 0],
+                0.3, 3, 0.6, 5, 1.0, 8, 1.5, 12],
+            'circle-color': s2ColorRamp,
+            'circle-opacity': 0.25,
+            'circle-stroke-width': 1.5,
+            'circle-stroke-color': s2ColorRamp,
         },
     });
 }
@@ -490,52 +497,52 @@ async function showFlareDetail(feature) {
     `;
     panel.classList.remove('hidden');
 
-    // Load sparkline async
-    db.queryDetections(p.flare_id).then(renderSparkline).catch(() => {});
+    // Load sparkline async, then append enhance button after chart renders
+    db.queryDetections(p.flare_id).then(detections => {
+        renderSparkline(detections);
 
-    // Enhance button
-    const chartContainer = document.getElementById('intensity-chart');
-    const enhanceBtn = document.createElement('button');
-    enhanceBtn.className = 'enhance-btn';
-    enhanceBtn.textContent = 'Enhance with Sentinel-2';
-    enhanceBtn.addEventListener('click', () => {
-        enhance(feature, map);
-        enhanceBtn.disabled = true;
-        enhanceBtn.textContent = 'Searching Sentinel-2 archive...';
-    });
-    chartContainer.appendChild(enhanceBtn);
+        // Enhance button — appended after sparkline so it's not overwritten
+        const chartContainer = document.getElementById('intensity-chart');
+        const enhanceBtn = document.createElement('button');
+        enhanceBtn.className = 'enhance-btn';
+        enhanceBtn.textContent = 'Enhance with Sentinel-2';
+        enhanceBtn.addEventListener('click', () => {
+            enhance(feature, map);
+            enhanceBtn.disabled = true;
+            enhanceBtn.textContent = 'Searching Sentinel-2 archive...';
+        });
+        chartContainer.appendChild(enhanceBtn);
 
-    // Wire up live progress updates
-    setUpdateCallback((s) => {
-        if (s.enhancing && s.progress?.total) {
-            enhanceBtn.textContent = `Processing image ${s.progress.done} of ${s.progress.total}...`;
-        }
-        if (!s.enhancing && s.clusters) {
-            enhanceBtn.textContent = `Enhanced — ${s.clusters.length} source${s.clusters.length !== 1 ? 's' : ''} found`;
-            // Add cluster summary to detail body
-            const body = document.getElementById('detail-body');
-            const summary = document.createElement('div');
-            summary.className = 'enhance-results';
-            summary.innerHTML = s.clusters.map((c, i) =>
-                `<div class="enhance-cluster" data-idx="${i}">
-                    <span class="cluster-dot"></span>
-                    B12 ${c.max_b12.toFixed(2)} · ${c.detection_count} detections · ${c.first_date} – ${c.last_date}
-                </div>`
-            ).join('');
-            // Click cluster row to zoom to it on map
-            summary.querySelectorAll('.enhance-cluster').forEach(el => {
-                el.addEventListener('click', () => {
-                    const c = s.clusters[Number(el.dataset.idx)];
-                    map.flyTo({ center: [c.lon, c.lat], zoom: 17 });
+        // Wire up live progress updates
+        setUpdateCallback((s) => {
+            if (s.enhancing && s.progress?.total) {
+                enhanceBtn.textContent = `Processing image ${s.progress.done} of ${s.progress.total}...`;
+            }
+            if (!s.enhancing && s.clusters) {
+                enhanceBtn.textContent = `Enhanced — ${s.clusters.length} source${s.clusters.length !== 1 ? 's' : ''} found`;
+                const body = document.getElementById('detail-body');
+                const summary = document.createElement('div');
+                summary.className = 'enhance-results';
+                summary.innerHTML = s.clusters.map((c, i) =>
+                    `<div class="enhance-cluster" data-idx="${i}">
+                        <span class="cluster-dot"></span>
+                        B12 ${c.max_b12.toFixed(2)} · ${c.detection_count} detections · ${c.first_date} – ${c.last_date}
+                    </div>`
+                ).join('');
+                summary.querySelectorAll('.enhance-cluster').forEach(el => {
+                    el.addEventListener('click', () => {
+                        const c = s.clusters[Number(el.dataset.idx)];
+                        map.flyTo({ center: [c.lon, c.lat], zoom: 17 });
+                    });
                 });
-            });
-            body.prepend(summary);
-        }
-        if (s.error) {
-            enhanceBtn.textContent = 'Enhancement failed';
-            enhanceBtn.disabled = false;
-        }
-    });
+                body.prepend(summary);
+            }
+            if (s.error) {
+                enhanceBtn.textContent = 'Enhancement failed';
+                enhanceBtn.disabled = false;
+            }
+        });
+    }).catch(() => {});
 }
 
 function showPermitDetail(feature) {

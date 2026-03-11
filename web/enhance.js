@@ -11,15 +11,18 @@ export function enhance(flare, map) {
     cancelEnhance(map);
 
     const p = flare.properties;
-    const [lon, lat] = flare.geometry.coordinates;
+    const lon = Number(p.lon);
+    const lat = Number(p.lat);
 
     // 750m pixel bbox (same math as flarePixelData in app.js)
     const dLat = 375 / 110540;
     const dLon = 375 / (111320 * Math.cos(lat * Math.PI / 180));
     const bbox = [lon - dLon, lat - dLat, lon + dLon, lat + dLat];
 
-    const start = p.first_detected;
     const end = p.last_detected;
+    // Cap to last year to keep image count manageable
+    const oneYearBefore = new Date(new Date(end).getTime() - 365 * 86400000).toISOString().slice(0, 10);
+    const start = p.first_detected > oneYearBefore ? p.first_detected : oneYearBefore;
 
     state = { enhancing: true, progress: { done: 0, total: null }, clusters: null, error: null };
     onUpdate?.(state);
