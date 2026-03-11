@@ -97,7 +97,7 @@ export async function queryPermits({ operator } = {}) {
             release_type, operator_name, n_filings,
             CAST(earliest_effective AS VARCHAR) AS earliest_effective,
             CAST(latest_expiration AS VARCHAR) AS latest_expiration,
-            max_release_rate_mcf_day, total_permitted_days
+            max_release_rate_mcf_day, total_permitted_days, exception_reasons
         FROM 'permits.parquet'
         ${where}
     `);

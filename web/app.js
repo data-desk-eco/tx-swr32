@@ -497,6 +497,7 @@ function showPermitDetail(feature) {
             ${field('Earliest effective', formatDate(p.earliest_effective))}
             ${field('Latest expiration', formatDate(p.latest_expiration))}
         </div>
+        ${p.exception_reasons ? `<div class="detail-row">${field('Reasons', p.exception_reasons.split('; ').join(' / '))}</div>` : ''}
     `;
     document.getElementById('detail-panel').classList.remove('hidden');
 }

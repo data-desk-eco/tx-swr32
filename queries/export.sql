@@ -57,7 +57,8 @@ COPY (
         min(p.effective_dt) AS earliest_effective,
         max(p.expiration_dt) AS latest_expiration,
         round(max(COALESCE(plm.release_rate_mcf_day, 0)), 0) AS max_release_rate_mcf_day,
-        sum(GREATEST(COALESCE(p.expiration_dt - p.effective_dt, 0), 0)) AS total_permitted_days
+        sum(GREATEST(COALESCE(p.expiration_dt - p.effective_dt, 0), 0)) AS total_permitted_days,
+        array_to_string(list_sort(list_distinct(flatten(list(string_split(p.exception_reasons, ';'))))), '; ') AS exception_reasons
     FROM flaring.permit_locations fl
     JOIN rrc.permits p ON p.filing_no = fl.filing_no
     LEFT JOIN (
