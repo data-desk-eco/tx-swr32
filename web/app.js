@@ -3,7 +3,6 @@ import * as db from './db.js';
 const COLORS = {
     dark: '#ff4422',
     permitted: '#00ff88',
-    excluded: '#888',
     permit: '#00ccff',
     plume: '#ff44ff'
 };
@@ -95,43 +94,37 @@ function addLayers() {
             'circle-radius': permitRadius,
             'circle-color': 'transparent',
             'circle-stroke-width': 1,
-            'circle-stroke-color': COLORS.permit,
-            'circle-stroke-opacity': 0.4
+            'circle-stroke-color': COLORS.permit
         }
     });
 
     map.addLayer({
         id: 'plumes-layer', type: 'circle', source: 'plumes',
         layout: { visibility: 'none' },
-        paint: { 'circle-radius': plumeRadius(), 'circle-color': 'transparent', 'circle-stroke-width': 1, 'circle-stroke-color': COLORS.plume, 'circle-stroke-opacity': 0.6 }
+        paint: { 'circle-radius': plumeRadius(), 'circle-color': 'transparent', 'circle-stroke-width': 1, 'circle-stroke-color': COLORS.plume }
     });
 
-    // Flare stroke color ramps by avg_rh_mw: dim base → bright/white at high intensity
+    // Flare stroke color ramps by avg_rh_mw (p25=0.5, p50=0.8, p75=1.3, p90=2.1)
     const darkColorRamp = [
         'interpolate', ['linear'],
         ['coalesce', ['get', 'avg_rh_mw'], 0],
-        0, '#991100', 1, '#ff4422', 5, '#ff8844', 20, '#ffcc44', 50, '#ffeeaa'
+        0, '#660800', 0.3, '#991100', 0.6, '#cc2200', 0.9, '#ff4422', 1.3, '#ff8844', 2, '#ffcc44', 4, '#ffeeaa'
     ];
     const permittedColorRamp = [
         'interpolate', ['linear'],
         ['coalesce', ['get', 'avg_rh_mw'], 0],
-        0, '#006633', 1, '#00ff88', 5, '#66ffaa', 20, '#aaffcc', 50, '#ccffdd'
+        0, '#003318', 0.3, '#006633', 0.6, '#00cc66', 0.9, '#00ff88', 1.3, '#66ffaa', 2, '#aaffcc', 4, '#ccffdd'
     ];
 
     map.addLayer({
-        id: 'flares-excluded', type: 'circle', source: 'flares',
-        filter: ['==', ['get', 'near_excluded_facility'], true],
-        paint: { 'circle-radius': flareRadius, 'circle-color': 'transparent', 'circle-stroke-width': 1, 'circle-stroke-color': COLORS.excluded, 'circle-stroke-opacity': 0.4 }
-    });
-    map.addLayer({
         id: 'flares-permitted', type: 'circle', source: 'flares',
         filter: ['all', ['!=', ['get', 'near_excluded_facility'], true], ['<=', ['get', 'dark_pct'], 50]],
-        paint: { 'circle-radius': flareRadius, 'circle-color': 'transparent', 'circle-stroke-width': 1, 'circle-stroke-color': permittedColorRamp, 'circle-stroke-opacity': 0.7 }
+        paint: { 'circle-radius': flareRadius, 'circle-color': 'transparent', 'circle-stroke-width': 1.5, 'circle-stroke-color': permittedColorRamp }
     });
     map.addLayer({
         id: 'flares-dark', type: 'circle', source: 'flares',
         filter: ['all', ['!=', ['get', 'near_excluded_facility'], true], ['>', ['get', 'dark_pct'], 50]],
-        paint: { 'circle-radius': flareRadius, 'circle-color': 'transparent', 'circle-stroke-width': 1, 'circle-stroke-color': darkColorRamp, 'circle-stroke-opacity': 0.8 }
+        paint: { 'circle-radius': flareRadius, 'circle-color': 'transparent', 'circle-stroke-width': 1.5, 'circle-stroke-color': darkColorRamp }
     });
 }
 
@@ -164,7 +157,7 @@ async function updateStats() {
 }
 
 const LAYER_MAP = {
-    flares: ['flares-dark', 'flares-permitted', 'flares-excluded'],
+    flares: ['flares-dark', 'flares-permitted'],
     permits: ['permits-layer'],
     plumes: ['plumes-layer']
 };
@@ -191,7 +184,7 @@ function setLayerVisibility(layer, visible) {
 }
 
 const ALL_CLICK_LAYERS = [
-    'flares-dark', 'flares-permitted', 'flares-excluded',
+    'flares-dark', 'flares-permitted',
     'permits-layer',
     'plumes-layer'
 ];
@@ -200,10 +193,6 @@ function bindUI() {
     document.getElementById('collapse-toggle').addEventListener('click', () => {
         document.getElementById('left-panel').classList.toggle('collapsed');
     });
-    document.getElementById('legend-collapse').addEventListener('click', () => {
-        document.getElementById('legend').classList.toggle('collapsed');
-    });
-
     for (const row of document.querySelectorAll('.toggle-row[data-layer]')) {
         const layer = row.dataset.layer;
         const cb = row.querySelector('input');
@@ -350,8 +339,8 @@ async function showFlareDetail(feature) {
         </div>
         <div class="detail-row">
             ${field('Operator', p.operator_name)}
-            ${field('Confidence', p.confidence || 'N/A')}
-            ${field('Nearest permit', [p.site_name, p.permit_name].filter(Boolean).join(', ') || 'None')}
+            ${field('Confidence', p.confidence ? p.confidence.charAt(0).toUpperCase() + p.confidence.slice(1) : 'N/A')}
+            ${field('Nearest permit', [...new Set([p.site_name, p.permit_name].filter(Boolean))].join(', ') || 'None')}
             ${field('Distance', p.nearest_permit_km != null ? Number(p.nearest_permit_km).toFixed(2) + ' km' : 'N/A')}
         </div>
         <div class="detail-row">
@@ -463,7 +452,10 @@ function renderSparkline(detections) {
         const val = det.rh_mw || 0;
         const t = val > 0 ? Math.max(0, Math.min(1, (Math.log(Math.max(lo, val)) - Math.log(lo)) / (Math.log(hi) - Math.log(lo)))) : 0;
         const y = margin.top + innerH - t * innerH;
-        const color = det.is_dark ? COLORS.dark : COLORS.permitted;
+        const mw = det.rh_mw || 0;
+        const color = det.is_dark
+            ? mw < 0.3 ? '#660800' : mw < 0.6 ? '#991100' : mw < 0.9 ? '#cc2200' : mw < 1.3 ? '#ff4422' : mw < 2 ? '#ff8844' : mw < 4 ? '#ffcc44' : '#ffeeaa'
+            : mw < 0.3 ? '#003318' : mw < 0.6 ? '#006633' : mw < 0.9 ? '#00cc66' : mw < 1.3 ? '#00ff88' : mw < 2 ? '#66ffaa' : mw < 4 ? '#aaffcc' : '#ccffdd';
         svg += `<circle class="chart-dot" cx="${x}" cy="${y}" r="1.5" fill="${color}" opacity="0.8"/>`;
     });
 

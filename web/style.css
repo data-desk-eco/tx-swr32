@@ -60,7 +60,8 @@ html, body { width: 100%; height: 100%; font-family: 'Inter', -apple-system, Bli
 .left-panel.collapsed .panel-body, .left-panel.collapsed .subtitle { max-height: 0; opacity: 0; }
 .separator { border-top: 1px solid var(--border-light); margin: 12px 0; }
 
-.stat-row { display: flex; justify-content: space-between; align-items: center; }
+.stat-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+.stat-row:last-child { margin-bottom: 0; }
 .stat-label { font-size: var(--font-sm); color: var(--text-faint); }
 .stat-value { font-size: var(--font-sm); color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 
@@ -170,23 +171,10 @@ html, body { width: 100%; height: 100%; font-family: 'Inter', -apple-system, Bli
 }
 .flare-popup .maplibregl-popup-tip { display: none; }
 
-.legend { bottom: var(--edge-spacing); left: var(--edge-spacing); padding: 12px 14px; }
-.legend-header { display: flex; align-items: center; justify-content: space-between; margin: 0; }
-.legend-title-collapsed { display: none; }
-.legend.collapsed .legend-title-expanded { display: none; }
-.legend.collapsed .legend-title-collapsed { display: inline; }
-.legend-collapse {
-    cursor: pointer; color: var(--text-hint); transition: color 0.15s; user-select: none;
-    display: flex; align-items: center; justify-content: center; width: 16px; height: 16px; flex-shrink: 0; margin-left: auto;
-}
-.legend-collapse:hover { color: var(--text-primary); }
-.legend.collapsed .legend-collapse svg { transform: rotate(180deg); }
-.legend-body { overflow: hidden; max-height: 500px; transition: max-height 0.2s ease-out, opacity 0.2s ease-out; opacity: 1; }
-.legend.collapsed .legend-body { max-height: 0; opacity: 0; }
-.legend.collapsed .legend-header { margin-bottom: 0; }
-.legend-item { display: flex; align-items: center; margin: 6px 0; font-size: var(--font-sm); color: var(--text-muted); }
+.legend { bottom: var(--edge-spacing); left: var(--edge-spacing); padding: 10px 12px; }
+.legend-item { display: flex; align-items: center; margin: 4px 0; font-size: var(--font-sm); color: var(--text-muted); }
 .legend-circle-fill { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-.legend-src-wrap { width: 24px; margin-right: 10px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.legend-src-wrap { width: 16px; margin-right: 6px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 
 @media (max-width: 768px) {
     .left-panel { top: 8px; left: 8px; padding: 8px 12px 12px; max-width: 200px; }
