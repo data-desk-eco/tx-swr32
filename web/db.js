@@ -19,7 +19,7 @@ async function _init() {
     await db.instantiate(mainModule);
     conn = await db.connect();
 
-    const files = ['flares', 'flare_leases', 'permits', 'plumes', 'detections'];
+    const files = ['flares', 'flare_leases', 'permits', 'plumes', 'detections', 'wells'];
     await Promise.all(files.map(async name => {
         const resp = await fetch(`data/${name}.parquet`);
         const buf = await resp.arrayBuffer();
@@ -89,7 +89,9 @@ export async function queryFlareLeases(flareId) {
     return rows(result);
 }
 
-export async function queryPermits() {
+export async function queryPermits({ operator } = {}) {
+    let where = 'WHERE latitude IS NOT NULL AND longitude IS NOT NULL';
+    if (operator) where += ` AND lower(operator_name) LIKE '%${operator.toLowerCase().replace(/'/g, "''")}%'`;
     const result = await query(`
         SELECT latitude, longitude, name, county, district,
             release_type, operator_name, n_filings,
@@ -97,7 +99,7 @@ export async function queryPermits() {
             CAST(latest_expiration AS VARCHAR) AS latest_expiration,
             max_release_rate_mcf_day, total_permitted_days
         FROM 'permits.parquet'
-        WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+        ${where}
     `);
     const data = rows(result);
     return {
@@ -129,14 +131,23 @@ export async function queryPlumes() {
     };
 }
 
-export async function queryStats() {
+export async function queryWells({ operator } = {}) {
+    let where = 'WHERE 1=1';
+    if (operator) where += ` AND lower(operator_name) LIKE '%${operator.toLowerCase().replace(/'/g, "''")}%'`;
     const result = await query(`
-        SELECT
-            count(*) AS total_sites,
-            count(*) FILTER (WHERE dark_pct > 50 AND NOT near_excluded_facility) AS dark_sites,
-            round(avg(dark_pct) FILTER (WHERE NOT near_excluded_facility), 0) AS avg_dark_pct,
-            round(sum(total_rh_mw) FILTER (WHERE NOT near_excluded_facility), 0) AS total_mw
-        FROM 'flares.parquet'
+        SELECT api, oil_gas_code, lease_district, lease_number, well_number,
+            operator_name, latitude, longitude
+        FROM 'wells.parquet'
+        ${where}
     `);
-    return rows(result)[0];
+    const data = rows(result);
+    return {
+        type: 'FeatureCollection',
+        features: data.map(r => ({
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: [Number(r.longitude), Number(r.latitude)] },
+            properties: r
+        }))
+    };
 }
+

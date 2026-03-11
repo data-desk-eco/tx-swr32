@@ -4,10 +4,11 @@ const COLORS = {
     dark: '#ff4422',
     permitted: '#00ff88',
     permit: '#00ccff',
-    plume: '#ff44ff'
+    plume: '#ff44ff',
+    well: 'rgba(220,220,230,0.8)'
 };
 
-let layerState = { flares: true, permits: false, plumes: false };
+let layerState = { flares: true, permits: true, plumes: false, wells: false };
 let operatorFilter = '';
 let overlappingFeatures = [];
 let overlapIndex = 0;
@@ -61,8 +62,10 @@ map.on('load', async () => {
     addEmptySources();
     addLayers();
     await refreshFlares();
+    await loadPermits();
     await updateStats();
     bindUI();
+    updateMapCentre();
 });
 
 function addEmptySources() {
@@ -71,6 +74,8 @@ function addEmptySources() {
     map.addSource('flares', { type: 'geojson', data: empty });
     map.addSource('permits', { type: 'geojson', data: empty });
     map.addSource('plumes', { type: 'geojson', data: empty });
+    map.addSource('wells', { type: 'geojson', data: empty });
+    map.addSource('flare-pixels', { type: 'geojson', data: empty });
 }
 
 function addLayers() {
@@ -94,11 +99,23 @@ function addLayers() {
     ];
 
     map.addLayer({
-        id: 'permits-layer', type: 'circle', source: 'permits',
+        id: 'wells-layer', type: 'circle', source: 'wells',
         layout: { visibility: 'none' },
         paint: {
+            'circle-radius': ['interpolate', ['linear'], ['zoom'], 7, 1.5, 10, 3, 14, 5],
+            'circle-color': COLORS.well,
+            'circle-opacity': 0.25,
+            'circle-stroke-width': 1,
+            'circle-stroke-color': COLORS.well
+        }
+    });
+
+    map.addLayer({
+        id: 'permits-layer', type: 'circle', source: 'permits',
+        paint: {
             'circle-radius': permitRadius,
-            'circle-color': 'transparent',
+            'circle-color': COLORS.permit,
+            'circle-opacity': 0.25,
             'circle-stroke-width': 1,
             'circle-stroke-color': COLORS.permit
         }
@@ -107,7 +124,7 @@ function addLayers() {
     map.addLayer({
         id: 'plumes-layer', type: 'circle', source: 'plumes',
         layout: { visibility: 'none' },
-        paint: { 'circle-radius': plumeRadius(), 'circle-color': 'transparent', 'circle-stroke-width': 1, 'circle-stroke-color': COLORS.plume }
+        paint: { 'circle-radius': plumeRadius(), 'circle-color': COLORS.plume, 'circle-opacity': 0.25, 'circle-stroke-width': 1, 'circle-stroke-color': COLORS.plume }
     });
 
     // Flare stroke color ramp by avg_rh_mw (p25=0.5, p50=0.8, p75=1.3, p90=2.1)
@@ -117,10 +134,55 @@ function addLayers() {
         0, '#660800', 0.3, '#991100', 0.6, '#cc2200', 0.9, '#ff4422', 1.3, '#ff8844', 2, '#ffcc44', 4, '#ffeeaa'
     ];
 
+    // VIIRS M-band pixel footprint (750m square) — invisible fill for click target
+    map.addLayer({
+        id: 'flare-pixels-fill', type: 'fill', source: 'flare-pixels',
+        filter: ['!=', ['get', 'near_excluded_facility'], true],
+        paint: { 'fill-color': 'transparent' }
+    });
+
+    // Dashed outline
+    map.addLayer({
+        id: 'flare-pixels-layer', type: 'line', source: 'flare-pixels',
+        filter: ['!=', ['get', 'near_excluded_facility'], true],
+        paint: {
+            'line-color': 'rgba(255,240,150,0.8)',
+            'line-width': 1,
+            'line-dasharray': [3, 2]
+        }
+    });
+
+    // Label above pixel square (positioned at top-left corner)
+    map.addSource('flare-pixel-labels', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+    map.addLayer({
+        id: 'flare-pixels-label', type: 'symbol', source: 'flare-pixel-labels',
+        filter: ['!=', ['get', 'near_excluded_facility'], true],
+        layout: {
+            'text-field': 'FLARE DETECTION AREA',
+            'text-font': ['Noto Sans Regular'],
+            'text-size': 11,
+            'text-anchor': 'bottom-left',
+            'text-max-width': 999,
+            'text-offset': [-0.1, -0.3]
+        },
+        minzoom: 13,
+        paint: {
+            'text-color': 'rgba(255,240,150,0.8)',
+            'text-opacity': ['interpolate', ['linear'], ['zoom'], 13, 0, 15, 1]
+        }
+    });
+
     map.addLayer({
         id: 'flares-layer', type: 'circle', source: 'flares',
         filter: ['!=', ['get', 'near_excluded_facility'], true],
-        paint: { 'circle-radius': flareRadius, 'circle-color': 'transparent', 'circle-stroke-width': 1.5, 'circle-stroke-color': flareColorRamp }
+        paint: {
+            'circle-radius': flareRadius,
+            'circle-color': flareColorRamp,
+            'circle-opacity': ['interpolate', ['linear'], ['zoom'], 13, 0.25, 15, 0],
+            'circle-stroke-width': 1.5,
+            'circle-stroke-color': flareColorRamp,
+            'circle-stroke-opacity': ['interpolate', ['linear'], ['zoom'], 13, 1, 15, 0]
+        }
     });
 }
 
@@ -128,14 +190,52 @@ function plumeRadius() {
     return ['interpolate', ['linear'], ['coalesce', ['get', 'emission_rate'], 100], 10, 3, 500, 6, 5000, 12];
 }
 
+// Generate 750m square polygons and top-left label points from flare data
+function flarePixelData(flareGeoJson) {
+    const HALF_M = 375; // half of 750m pixel
+    const squares = [];
+    const labels = [];
+    for (const f of flareGeoJson.features) {
+        const [lon, lat] = f.geometry.coordinates;
+        const dLat = HALF_M / 110540;
+        const dLon = HALF_M / (111320 * Math.cos(lat * Math.PI / 180));
+        squares.push({
+            type: 'Feature',
+            geometry: {
+                type: 'Polygon',
+                coordinates: [[
+                    [lon - dLon, lat - dLat],
+                    [lon + dLon, lat - dLat],
+                    [lon + dLon, lat + dLat],
+                    [lon - dLon, lat + dLat],
+                    [lon - dLon, lat - dLat]
+                ]]
+            },
+            properties: f.properties
+        });
+        labels.push({
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: [lon - dLon, lat + dLat] },
+            properties: f.properties
+        });
+    }
+    return {
+        squares: { type: 'FeatureCollection', features: squares },
+        labels: { type: 'FeatureCollection', features: labels }
+    };
+}
+
 async function refreshFlares() {
     const data = await db.queryFlares({ operator: operatorFilter || undefined });
     map.getSource('flares').setData(data);
+    const px = flarePixelData(data);
+    map.getSource('flare-pixels').setData(px.squares);
+    map.getSource('flare-pixel-labels').setData(px.labels);
 }
 
 async function loadPermits() {
     if (!layerState.permits) return;
-    const data = await db.queryPermits();
+    const data = await db.queryPermits({ operator: operatorFilter || undefined });
     map.getSource('permits').setData(data);
 }
 
@@ -145,17 +245,33 @@ async function loadPlumes() {
     map.getSource('plumes').setData(data);
 }
 
-async function updateStats() {
-    const stats = await db.queryStats();
-    document.getElementById('stat-sites').textContent = stats.total_sites?.toLocaleString() || '--';
-    document.getElementById('stat-dark-rate').textContent = stats.avg_dark_pct != null ? stats.avg_dark_pct + '%' : '--';
-    document.getElementById('stat-mw').textContent = stats.total_mw?.toLocaleString() || '--';
+async function loadWells() {
+    if (!layerState.wells) return;
+    const data = await db.queryWells({ operator: operatorFilter || undefined });
+    map.getSource('wells').setData(data);
+}
+
+function updateMapCentre() {
+    const c = map.getCenter();
+    document.getElementById('map-centre').textContent = `${c.lat.toFixed(3)}, ${c.lng.toFixed(3)}`;
+}
+
+function updateStats() {
+    const features = map.queryRenderedFeatures({ layers: ['flares-layer'] });
+    const sites = features.length;
+    const darkSites = features.filter(f => f.properties.dark_pct > 50).length;
+    const darkRate = sites > 0 ? Math.round(100 * darkSites / sites) : 0;
+    const totalMw = features.reduce((s, f) => s + (Number(f.properties.total_rh_mw) || 0), 0);
+    document.getElementById('stat-sites').textContent = sites.toLocaleString();
+    document.getElementById('stat-dark-rate').textContent = sites > 0 ? darkRate + '%' : '--';
+    document.getElementById('stat-mw').textContent = sites > 0 ? Math.round(totalMw).toLocaleString() : '--';
 }
 
 const LAYER_MAP = {
-    flares: ['flares-layer'],
+    flares: ['flares-layer', 'flare-pixels-fill', 'flare-pixels-layer', 'flare-pixels-label'],
     permits: ['permits-layer'],
-    plumes: ['plumes-layer']
+    plumes: ['plumes-layer'],
+    wells: ['wells-layer']
 };
 
 function setLayerVisibility(layer, visible) {
@@ -167,13 +283,17 @@ function setLayerVisibility(layer, visible) {
     if (visible) {
         if (layer === 'permits') loadPermits();
         if (layer === 'plumes') loadPlumes();
+        if (layer === 'wells') loadWells();
     }
 }
 
 const ALL_CLICK_LAYERS = [
     'flares-layer',
+    'flare-pixels-fill',
+    'flare-pixels-layer',
     'permits-layer',
-    'plumes-layer'
+    'plumes-layer',
+    'wells-layer'
 ];
 
 function bindUI() {
@@ -196,6 +316,8 @@ function bindUI() {
         searchTimeout = setTimeout(() => {
             operatorFilter = e.target.value.trim();
             refreshFlares();
+            loadPermits();
+            loadWells();
         }, 300);
     });
 
@@ -231,10 +353,14 @@ function bindUI() {
             return;
         }
 
-        // Sort by distance to click
+        // Sort by distance to click (use properties for polygons)
+        const featureCenter = f => {
+            if (f.geometry.type === 'Point') return f.geometry.coordinates;
+            return [Number(f.properties.lon), Number(f.properties.lat)];
+        };
         features.sort((a, b) => {
-            const [aLng, aLat] = a.geometry.coordinates;
-            const [bLng, bLat] = b.geometry.coordinates;
+            const [aLng, aLat] = featureCenter(a);
+            const [bLng, bLat] = featureCenter(b);
             return Math.hypot(aLng - e.lngLat.lng, aLat - e.lngLat.lat)
                  - Math.hypot(bLng - e.lngLat.lng, bLat - e.lngLat.lat);
         });
@@ -252,13 +378,20 @@ function bindUI() {
 
     map.on('mousemove', 'flares-layer', e => showTooltip(e));
     map.on('mouseleave', 'flares-layer', () => popup.remove());
+    map.on('mousemove', 'flare-pixels-fill', e => showTooltip(e));
+    map.on('mouseleave', 'flare-pixels-fill', () => popup.remove());
+    map.on('mousemove', 'flare-pixels-layer', e => showTooltip(e));
+    map.on('mouseleave', 'flare-pixels-layer', () => popup.remove());
+
+    map.on('move', updateMapCentre);
+    map.on('moveend', updateStats);
 }
 
 function showTooltip(e) {
     const p = e.features[0].properties;
     popup.setLngLat(e.lngLat).setHTML(
         `<strong>${p.operator_name}</strong><br>` +
-        `${p.dark_pct}% dark · ${Number(p.total_rh_mw).toLocaleString()} MW`
+        `${p.dark_pct ?? '--'}% dark · ${num(p.total_rh_mw)} MW`
     ).addTo(map);
 }
 
@@ -270,9 +403,10 @@ function closeDetail() {
 
 function showFeatureDetail(feature) {
     const layer = feature.layer.id;
-    if (layer.startsWith('flares-')) showFlareDetail(feature);
+    if (layer.startsWith('flare')) showFlareDetail(feature);
     else if (layer.startsWith('permits-')) showPermitDetail(feature);
     else if (layer.startsWith('plumes-')) showPlumeDetail(feature);
+    else if (layer.startsWith('wells-')) showWellDetail(feature);
 
     // Update overlap nav
     const nav = document.getElementById('overlap-nav');
@@ -309,9 +443,9 @@ async function showFlareDetail(feature) {
         if (leases.length > 0) {
             const names = [...new Set(leases.map(l => l.lease_name).filter(Boolean))];
             if (names.length > 0) {
-                leaseHtml = '<div class="detail-row">' + field('Leases', names.join(', ')) + '</div>';
+                leaseHtml = '<div class="detail-row lease-row">' + field('Leases', names.join(', ')) + '</div>';
             } else {
-                leaseHtml = '<div class="detail-row">' + field('Leases', `${leases.length} matched (unnamed)`) + '</div>';
+                leaseHtml = '<div class="detail-row lease-row">' + field('Leases', `${leases.length} matched (unnamed)`) + '</div>';
             }
         }
     } catch { /* lease query failed, skip */ }
@@ -319,8 +453,8 @@ async function showFlareDetail(feature) {
     document.getElementById('intensity-chart').innerHTML = '';
     document.getElementById('detail-body').innerHTML = `
         <div class="stats-grid">
-            <div class="stat"><div class="stat-big">${Number(p.total_rh_mw).toLocaleString()}</div><div class="stat-unit">total MW</div></div>
-            <div class="stat"><div class="stat-big">${Number(p.dark_days).toLocaleString()}/${Number(p.total_days).toLocaleString()}</div><div class="stat-unit">dark/total days</div></div>
+            <div class="stat"><div class="stat-big">${num(p.total_rh_mw)}</div><div class="stat-unit">total MW</div></div>
+            <div class="stat"><div class="stat-big">${num(p.dark_days)}/${num(p.total_days)}</div><div class="stat-unit">dark/total days</div></div>
         </div>
         <div class="detail-row">
             ${field('Operator', p.operator_name)}
@@ -399,12 +533,30 @@ function showPlumeDetail(feature) {
     document.getElementById('detail-panel').classList.remove('hidden');
 }
 
+function showWellDetail(feature) {
+    const p = feature.properties;
+    document.getElementById('intensity-chart').innerHTML = '';
+    document.getElementById('detail-badge').classList.add('hidden');
+    document.getElementById('detail-title').textContent = `Well ${p.api}`;
+    document.getElementById('detail-coords').textContent = `${Number(p.latitude).toFixed(4)}, ${Number(p.longitude).toFixed(4)}`;
+    document.getElementById('detail-body').innerHTML = `
+        <div class="detail-row">
+            ${field('Operator', p.operator_name || 'N/A')}
+            ${field('Type', p.oil_gas_code === 'O' ? 'Oil' : p.oil_gas_code === 'G' ? 'Gas' : p.oil_gas_code || 'N/A')}
+            ${field('District', p.lease_district || 'N/A')}
+            ${field('Lease', p.lease_number || 'N/A')}
+            ${field('Well #', p.well_number || 'N/A')}
+        </div>
+    `;
+    document.getElementById('detail-panel').classList.remove('hidden');
+}
+
 function renderSparkline(detections) {
     const container = document.getElementById('intensity-chart');
     if (!detections?.length) { container.innerHTML = ''; return; }
 
-    const margin = { top: 6, right: 6, bottom: 14, left: 6 };
-    const width = 400, height = 64;
+    const margin = { top: 8, right: 8, bottom: 16, left: 8 };
+    const width = container.clientWidth || 400, height = 100;
     const innerW = width - margin.left - margin.right;
     const innerH = height - margin.top - margin.bottom;
 
@@ -427,7 +579,7 @@ function renderSparkline(detections) {
         const jan1 = new Date(y, 0, 1).getTime();
         const x = margin.left + ((jan1 - minDate) / dateRange) * innerW;
         svg += `<line x1="${x}" y1="${margin.top}" x2="${x}" y2="${height - margin.bottom}" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>`;
-        svg += `<text x="${x}" y="${height - 2}" fill="rgba(255,255,255,0.3)" font-size="8" text-anchor="middle">${y}</text>`;
+        svg += `<text x="${x}" y="${height - 2}" fill="rgba(255,255,255,0.3)" font-size="10" text-anchor="middle">${y}</text>`;
     }
 
     // Detection dots — small for dense data
@@ -441,11 +593,16 @@ function renderSparkline(detections) {
         const color = det.is_dark
             ? mw < 0.3 ? '#660800' : mw < 0.6 ? '#991100' : mw < 0.9 ? '#cc2200' : mw < 1.3 ? '#ff4422' : mw < 2 ? '#ff8844' : mw < 4 ? '#ffcc44' : '#ffeeaa'
             : mw < 0.3 ? '#003318' : mw < 0.6 ? '#006633' : mw < 0.9 ? '#00cc66' : mw < 1.3 ? '#00ff88' : mw < 2 ? '#66ffaa' : mw < 4 ? '#aaffcc' : '#ccffdd';
-        svg += `<circle class="chart-dot" cx="${x}" cy="${y}" r="1.5" fill="${color}" opacity="0.8"/>`;
+        svg += `<circle class="chart-dot" cx="${x}" cy="${y}" r="2" fill="${color}" opacity="0.8"/>`;
     });
 
     svg += '</svg>';
     container.innerHTML = svg;
+}
+
+function num(v) {
+    const n = Number(v);
+    return isNaN(n) || v == null ? '--' : n.toLocaleString();
 }
 
 function formatDate(d) {

@@ -1,6 +1,6 @@
 LOAD spatial;
 
-SET VARIABLE permit_radius = 1000;
+SET VARIABLE permit_radius = 375;  -- VIIRS M-band pixel radius (750m / 2)
 SET VARIABLE plume_radius = 1000;
 SET VARIABLE start_date = '2021-01-01'::DATE;
 SET VARIABLE lat_min = 30.0;
@@ -42,17 +42,32 @@ WHERE fl.filing_no NOT IN (SELECT filing_no FROM raw.permits WHERE property_type
 
 CREATE INDEX idx_permit_loc_geom ON flaring.permit_locations USING RTREE (geom);
 
--- Site ↔ permit matches within 1km
+-- Site ↔ permit matches within pixel radius (375m)
 CREATE OR REPLACE TABLE flaring.site_permit_matches AS
 SELECT
-    f.flare_id, fl.filing_no,
+    f.flare_id, fl.filing_no, fl.name AS location_name,
     ST_Distance_Sphere(f.geom, fl.geom) / 1000.0 AS distance_km,
     ROW_NUMBER() OVER (PARTITION BY f.flare_id ORDER BY ST_Distance_Sphere(f.geom, fl.geom)) AS rank
 FROM flaring.sites f
 JOIN flaring.permit_locations fl ON fl.geom IS NOT NULL
-    AND fl.longitude BETWEEN f.lon - 0.03 AND f.lon + 0.03
-    AND fl.latitude  BETWEEN f.lat - 0.03 AND f.lat + 0.03
+    AND fl.longitude BETWEEN f.lon - 0.005 AND f.lon + 0.005
+    AND fl.latitude  BETWEEN f.lat - 0.005 AND f.lat + 0.005
     AND ST_Distance_Sphere(f.geom, fl.geom) < getvariable('permit_radius')
+WHERE NOT f.near_excluded_facility;
+
+-- Site ↔ well matches within pixel radius (375m)
+CREATE OR REPLACE TABLE flaring.site_well_matches AS
+SELECT
+    f.flare_id, w.api, w.operator_no,
+    o.operator_name,
+    ST_Distance_Sphere(f.geom, w.geom) / 1000.0 AS distance_km,
+    ROW_NUMBER() OVER (PARTITION BY f.flare_id ORDER BY ST_Distance_Sphere(f.geom, w.geom)) AS rank
+FROM flaring.sites f
+JOIN raw.wells w ON w.geom IS NOT NULL
+    AND w.longitude BETWEEN f.lon - 0.005 AND f.lon + 0.005
+    AND w.latitude  BETWEEN f.lat - 0.005 AND f.lat + 0.005
+    AND ST_Distance_Sphere(f.geom, w.geom) < getvariable('permit_radius')
+LEFT JOIN raw.operators o ON LPAD(o.operator_number, 6, '0') = LPAD(w.operator_no, 6, '0')
 WHERE NOT f.near_excluded_facility;
 
 -- Permit coverage with date validation
@@ -69,37 +84,82 @@ JOIN rrc.permits p ON p.filing_no = sm.filing_no
 WHERE p.status IN ('Approved', 'Submitted', 'Hearing Pending', 'Resubmitted')
   AND p.property_type != 'Gas Plant';
 
--- Operator attribution per site (from nearest permit)
+-- Operator attribution per site (from nearest permit + wells within pixel)
 CREATE OR REPLACE TABLE flaring.site_operators AS
-WITH nearest AS (
-    SELECT flare_id, filing_no, distance_km, operator_name, operator_no, lease_district
-    FROM flaring.site_permit_coverage WHERE rank = 1
-),
-nearby_ops AS (
-    SELECT sm.flare_id,
-        n.operator_name AS attributed_operator,
-        p.operator_name AS nearby_operator,
-        COUNT(DISTINCT sm.filing_no) AS n_permits
+WITH
+-- All nearby operators from permits
+permit_ops AS (
+    SELECT sm.flare_id, p.operator_name, 'permit' AS source,
+        COUNT(DISTINCT sm.filing_no) AS n_records,
+        MIN(sm.distance_km) AS min_distance_km
     FROM flaring.site_permit_matches sm
     JOIN rrc.permits p ON p.filing_no = sm.filing_no
-    JOIN nearest n USING (flare_id)
-    GROUP BY 1, 2, 3
+    GROUP BY 1, 2
 ),
+-- All nearby operators from wells
+well_ops AS (
+    SELECT wm.flare_id, wm.operator_name, 'well' AS source,
+        COUNT(DISTINCT wm.api) AS n_records,
+        MIN(wm.distance_km) AS min_distance_km
+    FROM flaring.site_well_matches wm
+    WHERE wm.operator_name IS NOT NULL
+    GROUP BY 1, 2
+),
+-- Combined: all operators near each site with total evidence count
+all_ops AS (
+    SELECT flare_id, operator_name, SUM(n_records) AS total_records,
+        MIN(min_distance_km) AS min_distance_km,
+        bool_or(source = 'permit') AS has_permit
+    FROM (SELECT flare_id, operator_name, source, n_records, min_distance_km FROM permit_ops
+          UNION ALL
+          SELECT flare_id, operator_name, source, n_records, min_distance_km FROM well_ops) combined
+    GROUP BY 1, 2
+),
+-- Pick best operator per site: prefer operators with permits, then most evidence, then closest
+ranked AS (
+    SELECT *, ROW_NUMBER() OVER (
+        PARTITION BY flare_id
+        ORDER BY has_permit DESC, total_records DESC, min_distance_km
+    ) AS rn
+    FROM all_ops
+),
+best AS (SELECT * FROM ranked WHERE rn = 1),
+-- Confidence: how dominant is the attributed operator?
 agg AS (
-    SELECT flare_id, attributed_operator,
-        COUNT(DISTINCT nearby_operator) AS n_operators,
-        SUM(CASE WHEN nearby_operator = attributed_operator THEN n_permits ELSE 0 END) * 1.0
-          / SUM(n_permits) AS own_share
-    FROM nearby_ops GROUP BY 1, 2
+    SELECT b.flare_id,
+        COUNT(DISTINCT a.operator_name) AS n_operators,
+        SUM(CASE WHEN a.operator_name = b.operator_name THEN a.total_records ELSE 0 END) * 1.0
+          / SUM(a.total_records) AS own_share
+    FROM best b JOIN all_ops a USING (flare_id)
+    GROUP BY 1
+),
+-- Nearest permit info (may be null if matched only via wells)
+nearest_permit AS (
+    SELECT spc.flare_id, spc.filing_no, spc.distance_km AS nearest_permit_km,
+        spc.operator_name AS permit_operator, spc.operator_no, spc.lease_district,
+        sm.location_name AS nearest_permit_name
+    FROM flaring.site_permit_coverage spc
+    JOIN flaring.site_permit_matches sm ON sm.flare_id = spc.flare_id AND sm.filing_no = spc.filing_no
+    WHERE spc.rank = 1
 )
-SELECT n.flare_id, n.operator_name, n.operator_no,
-    n.filing_no AS nearest_filing_no, n.distance_km AS nearest_permit_km,
-    n.lease_district,
+SELECT b.flare_id, b.operator_name,
+    COALESCE(np.operator_no, (
+        SELECT wm.operator_no FROM flaring.site_well_matches wm
+        WHERE wm.flare_id = b.flare_id AND wm.operator_name = b.operator_name
+        ORDER BY wm.distance_km LIMIT 1
+    )) AS operator_no,
+    np.filing_no AS nearest_filing_no, np.nearest_permit_km,
+    np.nearest_permit_name,
+    np.lease_district,
     CASE WHEN a.n_operators = 1 THEN 'sole'
          WHEN a.own_share > 0.5 THEN 'majority'
          ELSE 'contested'
-    END AS confidence
-FROM nearest n LEFT JOIN agg a USING (flare_id);
+    END AS confidence,
+    b.has_permit AS has_nearby_permit,
+    b.total_records AS nearby_records
+FROM best b
+LEFT JOIN agg a USING (flare_id)
+LEFT JOIN nearest_permit np USING (flare_id);
 
 -- Site ↔ lease matches (flare within OTLS lease boundary)
 CREATE OR REPLACE TABLE flaring.site_leases AS
@@ -129,7 +189,7 @@ WITH matched AS (
         ) AS rn
     FROM raw.vnf v
     JOIN flaring.sites fs USING (flare_id)
-    JOIN flaring.site_operators so USING (flare_id)
+    LEFT JOIN flaring.site_operators so USING (flare_id)
     LEFT JOIN (
         flaring.site_permit_matches sm
         JOIN flaring.site_permit_coverage spc
@@ -245,7 +305,9 @@ JOIN raw.wells w ON w.geom IS NOT NULL
     AND w.longitude BETWEEN p.longitude - 0.02 AND p.longitude + 0.02
     AND w.latitude  BETWEEN p.latitude  - 0.02 AND p.latitude  + 0.02
     AND ST_Distance_Sphere(p.geom, w.geom) < getvariable('plume_radius')
-WHERE NOT EXISTS (
+WHERE p.latitude BETWEEN getvariable('lat_min') AND getvariable('lat_max')
+  AND p.longitude BETWEEN getvariable('lon_min') AND getvariable('lon_max')
+  AND NOT EXISTS (
     SELECT 1 FROM raw.excluded_facilities ef
     WHERE ef.geom IS NOT NULL
       AND ef.longitude BETWEEN p.longitude - 0.015 AND p.longitude + 0.015
@@ -264,7 +326,9 @@ JOIN flaring.sites fs
     ON fs.lon BETWEEN p.longitude - 0.02 AND p.longitude + 0.02
     AND fs.lat BETWEEN p.latitude - 0.02 AND p.latitude + 0.02
     AND ST_Distance_Sphere(p.geom, fs.geom) < getvariable('plume_radius')
-WHERE NOT fs.near_excluded_facility;
+WHERE p.latitude BETWEEN getvariable('lat_min') AND getvariable('lat_max')
+  AND p.longitude BETWEEN getvariable('lon_min') AND getvariable('lon_max')
+  AND NOT fs.near_excluded_facility;
 
 -- Attributed plumes: classified as flaring/unlit/wellpad/unmatched
 CREATE OR REPLACE TABLE flaring.plumes AS
@@ -296,7 +360,9 @@ SELECT
 FROM raw.plumes p
 LEFT JOIN (SELECT * FROM flaring.plume_wells WHERE rank = 1) pw USING (plume_id)
 LEFT JOIN plume_vnf pv USING (plume_id)
-LEFT JOIN raw.operators o ON LPAD(o.operator_number, 6, '0') = LPAD(pw.operator_no, 6, '0');
+LEFT JOIN raw.operators o ON LPAD(o.operator_number, 6, '0') = LPAD(pw.operator_no, 6, '0')
+WHERE p.latitude BETWEEN getvariable('lat_min') AND getvariable('lat_max')
+  AND p.longitude BETWEEN getvariable('lon_min') AND getvariable('lon_max');
 
 -- Summary views
 

@@ -30,6 +30,7 @@
 
         <div class="panel-body">
             <div class="separator"></div>
+            <div class="map-centre" id="map-centre"></div>
             <div class="stats">
                 <div class="stat-row"><span class="stat-label">Flare sites</span><span class="stat-value" id="stat-sites">--</span></div>
                 <div class="stat-row"><span class="stat-label">Dark rate</span><span class="stat-value" id="stat-dark-rate">--</span></div>
@@ -37,6 +38,10 @@
             </div>
 
             <div class="separator"></div>
+            <div class="filter-group">
+                <input type="text" class="operator-search" id="operator-search" placeholder="Filter by operator...">
+            </div>
+
             <div class="filter-group">
                 <div class="toggle-row" data-layer="flares">
                     <span class="layer-icon" style="border-color: #ffaa44"></span>
@@ -46,17 +51,18 @@
                 <div class="toggle-row" data-layer="permits">
                     <span class="layer-icon" style="border-color: #00ccff"></span>
                     <span class="filter-label">Permit locations</span>
-                    <input type="checkbox">
+                    <input type="checkbox" checked>
                 </div>
                 <div class="toggle-row" data-layer="plumes">
                     <span class="layer-icon" style="border-color: #ff44ff"></span>
                     <span class="filter-label">Methane plumes</span>
                     <input type="checkbox">
                 </div>
-            </div>
-
-            <div class="filter-group">
-                <input type="text" class="operator-search" id="operator-search" placeholder="Filter by operator...">
+                <div class="toggle-row" data-layer="wells">
+                    <span class="layer-icon" style="border-color: rgba(220,220,230,0.8)"></span>
+                    <span class="filter-label">RRC wells</span>
+                    <input type="checkbox">
+                </div>
             </div>
         </div>
     </div>

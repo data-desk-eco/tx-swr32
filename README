@@ -14,9 +14,13 @@ cross-referencing satellite detections with public permit records.
 
 How It Works
 
-For each satellite-detected flare, gaslight finds the nearest
-permitted flare location within 1km. If any nearby permit covers
-the detection date, it's "permitted"; otherwise it's "dark".
+For each satellite-detected flare, gaslight finds permits and wells
+within 375m (the VIIRS M-band pixel radius). If any nearby permit
+covers the detection date, it's "permitted"; otherwise it's "dark".
+
+Operator attribution uses combined evidence from permits and wells.
+Permits take priority; confidence is sole/majority/contested based
+on how dominant the attributed operator is across all nearby records.
 
 Leases are built from OTLS survey polygons containing each lease's
 wells. VNF sites within a lease footprint get allocated to that
@@ -62,7 +66,7 @@ Project Structure
   data/               Database, CSVs, parquets (gitignored)
   web/                Interactive map (MapLibre GL + DuckDB WASM)
     vendor/           Vendored JS deps (maplibre-gl, duckdb-wasm, fonts)
-    data/             Exported parquets for client-side queries
+    data/             Exported parquets (flares, permits, wells, plumes, detections)
 
 Zero npm dependencies. MapLibre GL and DuckDB WASM are vendored
 via scripts/vendor.sh. Everything runs client-side.

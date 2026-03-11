@@ -9,17 +9,13 @@ COPY (
         COALESCE(so.operator_name, 'Unknown') AS operator_name,
         so.confidence,
         round(so.nearest_permit_km, 3) AS nearest_permit_km,
-        fl.name AS permit_name, p.site_name,
+        so.nearest_permit_name AS permit_name, p.site_name,
         d.dark_days, d.total_days,
         round(100.0 * d.dark_days / NULLIF(d.total_days, 0), 1) AS dark_pct,
         round(d.total_rh_mw, 1) AS total_rh_mw,
         round(d.avg_rh_mw, 2) AS avg_rh_mw
     FROM flaring.sites fs
-    JOIN flaring.site_operators so USING (flare_id)
-    LEFT JOIN (
-        SELECT DISTINCT ON (filing_no) filing_no, name
-        FROM flaring.permit_locations ORDER BY filing_no
-    ) fl ON fl.filing_no = so.nearest_filing_no
+    LEFT JOIN flaring.site_operators so USING (flare_id)
     LEFT JOIN rrc.permits p ON p.filing_no = so.nearest_filing_no
     LEFT JOIN (
         SELECT flare_id,
@@ -82,6 +78,17 @@ COPY (
     FROM flaring.plumes
     WHERE latitude BETWEEN 30.0 AND 33.5 AND longitude BETWEEN -104.5 AND -100.0
 ) TO 'web/data/plumes.parquet' (FORMAT PARQUET, COMPRESSION ZSTD);
+
+COPY (
+    SELECT w.api, w.oil_gas_code, w.lease_district, w.lease_number, w.well_number,
+        COALESCE(o.operator_name, 'Unknown') AS operator_name,
+        w.latitude, w.longitude
+    FROM raw.wells w
+    LEFT JOIN raw.operators o ON o.operator_number = w.operator_no
+    WHERE w.latitude != 0 AND w.longitude != 0
+        AND w.latitude BETWEEN 30.0 AND 33.5
+        AND w.longitude BETWEEN -104.5 AND -100.0
+) TO 'web/data/wells.parquet' (FORMAT PARQUET, COMPRESSION ZSTD);
 
 COPY (
     SELECT v.flare_id, CAST(v.date AS VARCHAR) AS date,

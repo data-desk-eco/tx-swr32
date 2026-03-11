@@ -26,10 +26,10 @@ Pipeline: `load → rrc → flaring → export`
 
 ## Methodology
 
-1. **Dark flaring**: VNF flare sites matched to nearest SWR 32 permit location within 1km. For each detection-day, if any nearby permit covers the date, it's "permitted"; otherwise "dark".
+1. **Dark flaring**: VNF flare sites matched to SWR 32 permit locations and RRC wells within 375m (VIIRS M-band pixel radius). For each detection-day, if any nearby permit covers the date, it's "permitted"; otherwise "dark".
 2. **Lease matching**: spatial via `rrc.leases` (union of OTLS survey polygons containing each lease's wells). Wells are spatial-joined to OTLS surveys (`rrc.well_surveys`), then survey polygons are unioned per lease. VNF sites within a lease footprint (`ST_Contains`) get allocated to that lease. Vertically stacked leases (different depth intervals) share surface geometry.
 3. **Reported flaring**: PDQ gas disposition data (code 04 = vented/flared) cross-referenced with permit coverage to estimate unpermitted volumes.
-4. **Operator attribution**: nearest permit filing operator, with `sole`/`majority`/`contested` confidence levels.
+4. **Operator attribution**: combined evidence from permits and wells within pixel radius. Prefers operators with permit filings, then most evidence (wells + permits), then closest distance. Confidence: `sole`/`majority`/`contested`.
 5. **Exclusions**: EPA GHGRP non-upstream facilities within 1.5km; Gas Plant permits filtered out.
 6. **Plume attribution**: Carbon Mapper + IMEO methane plumes matched to wells and VNF sites within 1km. Classified as flaring/unlit/wellpad/unmatched.
 
@@ -42,6 +42,9 @@ Pipeline: `load → rrc → flaring → export`
 - **IMEO source**: `data/imeo_plumes.geojson` — manual download from methanedata.unep.org (no API).
 - **Permit coverage**: `rrc.permit_leases` maps each SWR 32 filing to its underlying leases.
 - **Permian bbox**: 30-33.5N, 100-104.5W (applied in `flaring` schema, not at load time)
+- **Match radius**: 375m (VIIRS M-band pixel radius = 750m / 2). Bounding box pre-filter ±0.005° (~500m).
+- **Well matching**: `flaring.site_well_matches` spatial-joins RRC wells within pixel radius alongside permits.
+- **VIIRS pixel squares**: 750m squares generated client-side in the web app for visual review of spatial matching.
 
 ## Commands
 
