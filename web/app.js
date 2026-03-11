@@ -53,7 +53,6 @@ const map = new maplibregl.Map({
     hash: 'map'
 });
 
-const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, maxWidth: '240px', className: 'flare-popup' });
 
 map.on('load', async () => {
     document.getElementById('stat-sites').textContent = 'Loading...';
@@ -401,23 +400,8 @@ function bindUI() {
         map.on('mouseleave', id, () => { map.getCanvas().style.cursor = ''; });
     }
 
-    map.on('mousemove', 'flares-layer', e => showTooltip(e));
-    map.on('mouseleave', 'flares-layer', () => popup.remove());
-    map.on('mousemove', 'flare-pixels-fill', e => showTooltip(e));
-    map.on('mouseleave', 'flare-pixels-fill', () => popup.remove());
-    map.on('mousemove', 'flare-pixels-layer', e => showTooltip(e));
-    map.on('mouseleave', 'flare-pixels-layer', () => popup.remove());
-
     map.on('move', updateMapCentre);
     map.on('moveend', updateStats);
-}
-
-function showTooltip(e) {
-    const p = e.features[0].properties;
-    popup.setLngLat(e.lngLat).setHTML(
-        `<strong>${p.operator_name}</strong><br>` +
-        `${p.dark_pct ?? '--'}% dark · ${num(p.total_rh_mw)} MW`
-    ).addTo(map);
 }
 
 function closeDetail() {
@@ -507,41 +491,9 @@ async function showFlareDetail(feature) {
         enhanceBtn.className = 'enhance-btn';
         enhanceBtn.textContent = 'Enhance with Sentinel-2';
         enhanceBtn.addEventListener('click', () => {
-            enhance(feature, map);
-            enhanceBtn.disabled = true;
-            enhanceBtn.textContent = 'Searching Sentinel-2 archive...';
+            showEnhanceDetail(feature);
         });
         chartContainer.appendChild(enhanceBtn);
-
-        // Wire up live progress updates
-        setUpdateCallback((s) => {
-            if (s.enhancing && s.progress?.total) {
-                enhanceBtn.textContent = `Processing image ${s.progress.done} of ${s.progress.total}...`;
-            }
-            if (!s.enhancing && s.clusters) {
-                enhanceBtn.textContent = `Enhanced — ${s.clusters.length} source${s.clusters.length !== 1 ? 's' : ''} found`;
-                const body = document.getElementById('detail-body');
-                const summary = document.createElement('div');
-                summary.className = 'enhance-results';
-                summary.innerHTML = s.clusters.map((c, i) =>
-                    `<div class="enhance-cluster" data-idx="${i}">
-                        <span class="cluster-dot"></span>
-                        B12 ${c.max_b12.toFixed(2)} · ${c.detection_count} detections · ${c.first_date} – ${c.last_date}
-                    </div>`
-                ).join('');
-                summary.querySelectorAll('.enhance-cluster').forEach(el => {
-                    el.addEventListener('click', () => {
-                        const c = s.clusters[Number(el.dataset.idx)];
-                        map.flyTo({ center: [c.lon, c.lat], zoom: 17 });
-                    });
-                });
-                body.prepend(summary);
-            }
-            if (s.error) {
-                enhanceBtn.textContent = 'Enhancement failed';
-                enhanceBtn.disabled = false;
-            }
-        });
     }).catch(() => {});
 }
 
@@ -621,6 +573,135 @@ function showWellDetail(feature) {
         </div>
     `;
     document.getElementById('detail-panel').classList.remove('hidden');
+}
+
+function showEnhanceDetail(feature) {
+    const p = feature.properties;
+    const panel = document.getElementById('detail-panel');
+
+    document.getElementById('detail-title').textContent = `Sentinel-2 · Flare ${p.flare_id}`;
+    document.getElementById('detail-coords').textContent = `${Number(p.lat).toFixed(4)}, ${Number(p.lon).toFixed(4)}`;
+    const badge = document.getElementById('detail-badge');
+    badge.className = 'status-badge s2';
+    badge.textContent = 'Enhancing';
+    badge.classList.remove('hidden');
+
+    // Hide overlap nav for enhance mode
+    document.getElementById('overlap-nav').classList.add('hidden');
+
+    document.getElementById('intensity-chart').innerHTML = '';
+    document.getElementById('detail-body').innerHTML = `
+        <div class="stats-grid" id="s2-stats">
+            <div class="stat"><div class="stat-big" id="s2-stat-detections">0</div><div class="stat-unit">detections</div></div>
+            <div class="stat"><div class="stat-big" id="s2-stat-images">0 / ?</div><div class="stat-unit">images</div></div>
+            <div class="stat"><div class="stat-big" id="s2-stat-max-b12">--</div><div class="stat-unit">peak B12</div></div>
+            <div class="stat"><div class="stat-big" id="s2-stat-mean-b12">--</div><div class="stat-unit">mean B12</div></div>
+        </div>
+    `;
+    panel.classList.remove('hidden');
+
+    // Wire up live updates before starting (cache path fires synchronously)
+    setUpdateCallback((s) => {
+        // Update stats
+        const dets = s.detections;
+        document.getElementById('s2-stat-detections').textContent = dets.length;
+
+        if (s.progress) {
+            const total = s.progress.total != null ? s.progress.total : '?';
+            document.getElementById('s2-stat-images').textContent = s.enhancing ? `${s.progress.done} / ${total}` : total;
+        } else if (!s.enhancing && dets.length > 0) {
+            document.getElementById('s2-stat-images').textContent = 'cached';
+        }
+
+        if (dets.length > 0) {
+            const maxB12 = Math.max(...dets.map(d => d.max_b12));
+            const meanB12 = dets.reduce((sum, d) => sum + d.max_b12, 0) / dets.length;
+            document.getElementById('s2-stat-max-b12').textContent = maxB12.toFixed(2);
+            document.getElementById('s2-stat-mean-b12').textContent = meanB12.toFixed(2);
+        }
+
+        // Live-update chart
+        renderS2Chart(dets);
+
+        // Update badge
+        if (s.enhancing) {
+            badge.textContent = s.progress?.total ? `${s.progress.done} / ${s.progress.total}` : 'Searching...';
+        } else if (s.error) {
+            badge.className = 'status-badge dark';
+            badge.textContent = 'Failed';
+        } else if (s.clusters) {
+            badge.textContent = `${s.clusters.length} source${s.clusters.length !== 1 ? 's' : ''}`;
+
+            // Show cluster results
+            if (!document.getElementById('s2-clusters')) {
+                const body = document.getElementById('detail-body');
+                const summary = document.createElement('div');
+                summary.id = 's2-clusters';
+                summary.className = 'enhance-results';
+                summary.innerHTML = s.clusters.map((c, i) =>
+                    `<div class="enhance-cluster" data-idx="${i}">
+                        <span class="cluster-dot"></span>
+                        B12 ${c.max_b12.toFixed(2)} · ${c.detection_count} det · ${c.first_date} – ${c.last_date}
+                    </div>`
+                ).join('');
+                summary.querySelectorAll('.enhance-cluster').forEach(el => {
+                    el.addEventListener('click', () => {
+                        const c = s.clusters[Number(el.dataset.idx)];
+                        map.flyTo({ center: [c.lon, c.lat], zoom: 17 });
+                    });
+                });
+                body.appendChild(summary);
+            }
+        }
+    });
+
+    // Start enhancement (may resolve from cache synchronously)
+    enhance(feature, map);
+}
+
+function renderS2Chart(detections) {
+    const container = document.getElementById('intensity-chart');
+    if (!detections?.length) { container.innerHTML = ''; return; }
+
+    const margin = { top: 8, right: 8, bottom: 16, left: 8 };
+    const width = container.clientWidth || 400, height = 100;
+    const innerW = width - margin.left - margin.right;
+    const innerH = height - margin.top - margin.bottom;
+
+    const dates = detections.map(d => new Date(d.date).getTime());
+    const minDate = Math.min(...dates);
+    const maxDate = Math.max(...dates);
+    const dateRange = maxDate - minDate || 1;
+
+    const vals = detections.map(d => d.max_b12);
+    const maxVal = Math.max(1.5, ...vals);
+
+    let svg = `<svg viewBox="0 0 ${width} ${height}">`;
+    svg += `<line x1="${margin.left}" y1="${height - margin.bottom}" x2="${width - margin.right}" y2="${height - margin.bottom}" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>`;
+
+    // Year gridlines
+    const firstYear = new Date(minDate).getFullYear();
+    const lastYear = new Date(maxDate).getFullYear();
+    for (let y = firstYear + 1; y <= lastYear; y++) {
+        const jan1 = new Date(y, 0, 1).getTime();
+        const x = margin.left + ((jan1 - minDate) / dateRange) * innerW;
+        svg += `<line x1="${x}" y1="${margin.top}" x2="${x}" y2="${height - margin.bottom}" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>`;
+        svg += `<text x="${x}" y="${height - 2}" fill="rgba(255,255,255,0.3)" font-size="10" text-anchor="middle">${y}</text>`;
+    }
+
+    // B12 detection dots
+    detections.forEach(det => {
+        const date = new Date(det.date).getTime();
+        const x = margin.left + ((date - minDate) / dateRange) * innerW;
+        const t = Math.min(1, det.max_b12 / maxVal);
+        const y = margin.top + innerH - t * innerH;
+        const b = det.max_b12;
+        const color = b < 0.3 ? '#660800' : b < 0.5 ? '#991100' : b < 0.7 ? '#cc2200' : b < 0.9 ? '#ff4422' : b < 1.2 ? '#ff8844' : '#ffcc44';
+        svg += `<circle class="chart-dot" cx="${x}" cy="${y}" r="2" fill="${color}" opacity="0.8"/>`;
+    });
+
+    svg += '</svg>';
+    container.innerHTML = svg;
 }
 
 function renderSparkline(detections) {

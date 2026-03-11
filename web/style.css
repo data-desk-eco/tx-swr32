@@ -216,15 +216,10 @@ html, body { width: 100%; height: 100%; font-family: 'Inter', -apple-system, Bli
 .status-badge.dark { color: var(--color-dark); border-color: var(--color-dark); background: rgba(255, 68, 34, 0.15); }
 .status-badge.permitted { color: var(--color-permitted); border-color: var(--color-permitted); background: rgba(0, 255, 136, 0.15); }
 .status-badge.excluded { color: var(--color-excluded); border-color: var(--color-excluded); background: rgba(102, 102, 102, 0.15); }
+.status-badge.s2 { color: #ffaa44; border-color: #ffaa44; background: rgba(255, 170, 68, 0.15); font-variant-numeric: tabular-nums; }
 .detail-title-row { display: flex; align-items: center; gap: 8px; }
 #detail-badge { flex-shrink: 0; }
 
-.flare-popup .maplibregl-popup-content {
-    background: var(--bg-panel); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-    color: var(--text-primary); font-size: var(--font-sm); line-height: 1.5;
-    padding: 8px 10px; border: 1px solid var(--border-subtle); border-radius: 0; box-shadow: none;
-}
-.flare-popup .maplibregl-popup-tip { display: none; }
 
 .logo {
     position: absolute; bottom: var(--edge-spacing); right: var(--edge-spacing);
