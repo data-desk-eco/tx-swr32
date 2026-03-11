@@ -1,4 +1,5 @@
 import * as db from './db.js';
+import { enhance, cancelEnhance, setUpdateCallback } from './enhance.js';
 
 const COLORS = {
     dark: '#ff4422',
@@ -413,12 +414,14 @@ function showTooltip(e) {
 }
 
 function closeDetail() {
+    cancelEnhance(map);
     document.getElementById('detail-panel').classList.add('hidden');
     overlappingFeatures = [];
     overlapIndex = 0;
 }
 
 function showFeatureDetail(feature) {
+    cancelEnhance(map);
     const layer = feature.layer.id;
     if (layer.startsWith('flare')) showFlareDetail(feature);
     else if (layer.startsWith('permits-')) showPermitDetail(feature);
@@ -489,6 +492,50 @@ async function showFlareDetail(feature) {
 
     // Load sparkline async
     db.queryDetections(p.flare_id).then(renderSparkline).catch(() => {});
+
+    // Enhance button
+    const chartContainer = document.getElementById('intensity-chart');
+    const enhanceBtn = document.createElement('button');
+    enhanceBtn.className = 'enhance-btn';
+    enhanceBtn.textContent = 'Enhance with Sentinel-2';
+    enhanceBtn.addEventListener('click', () => {
+        enhance(feature, map);
+        enhanceBtn.disabled = true;
+        enhanceBtn.textContent = 'Searching Sentinel-2 archive...';
+    });
+    chartContainer.appendChild(enhanceBtn);
+
+    // Wire up live progress updates
+    setUpdateCallback((s) => {
+        if (s.enhancing && s.progress?.total) {
+            enhanceBtn.textContent = `Processing image ${s.progress.done} of ${s.progress.total}...`;
+        }
+        if (!s.enhancing && s.clusters) {
+            enhanceBtn.textContent = `Enhanced — ${s.clusters.length} source${s.clusters.length !== 1 ? 's' : ''} found`;
+            // Add cluster summary to detail body
+            const body = document.getElementById('detail-body');
+            const summary = document.createElement('div');
+            summary.className = 'enhance-results';
+            summary.innerHTML = s.clusters.map((c, i) =>
+                `<div class="enhance-cluster" data-idx="${i}">
+                    <span class="cluster-dot"></span>
+                    B12 ${c.max_b12.toFixed(2)} · ${c.detection_count} detections · ${c.first_date} – ${c.last_date}
+                </div>`
+            ).join('');
+            // Click cluster row to zoom to it on map
+            summary.querySelectorAll('.enhance-cluster').forEach(el => {
+                el.addEventListener('click', () => {
+                    const c = s.clusters[Number(el.dataset.idx)];
+                    map.flyTo({ center: [c.lon, c.lat], zoom: 17 });
+                });
+            });
+            body.prepend(summary);
+        }
+        if (s.error) {
+            enhanceBtn.textContent = 'Enhancement failed';
+            enhanceBtn.disabled = false;
+        }
+    });
 }
 
 function showPermitDetail(feature) {

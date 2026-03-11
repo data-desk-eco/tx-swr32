@@ -147,6 +147,57 @@ html, body { width: 100%; height: 100%; font-family: 'Inter', -apple-system, Bli
 .intensity-chart svg { width: 100%; height: 100px; display: block; }
 .intensity-chart .chart-dot:hover { r: 3; }
 
+.enhance-btn {
+    display: block;
+    width: calc(100% - 32px);
+    margin: 8px 16px;
+    padding: 8px 12px;
+    background: none;
+    border: 1px solid var(--border-light);
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: 11px;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+}
+
+.enhance-btn:hover:not(:disabled) {
+    color: var(--text-primary);
+    border-color: rgba(255, 255, 255, 0.3);
+}
+
+.enhance-btn:disabled {
+    cursor: default;
+    color: var(--text-faint);
+}
+
+.enhance-results {
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--border-light);
+}
+
+.enhance-cluster {
+    padding: 4px 0;
+    font-size: 11px;
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+
+.enhance-cluster:hover {
+    color: var(--text-primary);
+}
+
+.cluster-dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #ff6600;
+    margin-right: 6px;
+}
+
 .stats-grid { padding: 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .stat { text-align: center; }
 .stat-big { font-size: 16px; font-weight: 400; color: var(--text-primary); font-variant-numeric: tabular-nums; }
