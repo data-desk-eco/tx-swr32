@@ -41,7 +41,7 @@ Pipeline: `load → rrc → flaring → export`
 - **Lease footprints**: `rrc.leases` — union of OTLS survey polygons per lease. Leases spanning >10km extent excluded as data errors.
 - **IMEO source**: `data/imeo_plumes.geojson` — manual download from methanedata.unep.org (no API).
 - **Permit coverage**: `rrc.permit_leases` maps each SWR 32 filing to its underlying leases.
-- **Permian bbox**: 30-33.5N, 100-104.5W (applied in `flaring` schema, not at load time)
+- **Permian bbox**: 30-33.5N, 100-104.5W (applied in `flaring` schema, not at load time). Texas-only: sites above 32°N must be east of -103.064° (TX-NM border) to exclude New Mexico.
 - **Match radius**: 375m (VIIRS M-band pixel radius = 750m / 2). Bounding box pre-filter ±0.005° (~500m).
 - **Well matching**: `flaring.site_well_matches` spatial-joins RRC wells within pixel radius alongside permits.
 - **VIIRS pixel squares**: 750m squares generated client-side in the web app for visual review of spatial matching.

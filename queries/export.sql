@@ -77,7 +77,6 @@ COPY (
         sector, classification, operator_name,
         vnf_flare_id, round(vnf_distance_km, 3) AS vnf_distance_km
     FROM flaring.plumes
-    WHERE latitude BETWEEN 30.0 AND 33.5 AND longitude BETWEEN -104.5 AND -100.0
 ) TO 'web/data/plumes.parquet' (FORMAT PARQUET, COMPRESSION ZSTD);
 
 COPY (

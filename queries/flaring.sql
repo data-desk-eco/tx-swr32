@@ -7,6 +7,7 @@ SET VARIABLE lat_min = 30.0;
 SET VARIABLE lat_max = 33.5;
 SET VARIABLE lon_min = -104.5;
 SET VARIABLE lon_max = -100.0;
+SET VARIABLE nm_border_lon = -103.064;  -- TX-NM border longitude (above 32°N)
 
 -- VNF flare sites: one row per site with exclusion flag
 CREATE OR REPLACE TABLE flaring.sites AS
@@ -27,7 +28,10 @@ FROM (
         COUNT(*) AS detection_days
     FROM raw.vnf WHERE detected AND date >= getvariable('start_date')
     GROUP BY flare_id
-) f;
+) f
+WHERE f.lat BETWEEN getvariable('lat_min') AND getvariable('lat_max')
+  AND f.lon BETWEEN getvariable('lon_min') AND getvariable('lon_max')
+  AND (f.lat <= 32.0 OR f.lon >= getvariable('nm_border_lon'));
 
 CREATE INDEX idx_sites_geom ON flaring.sites USING RTREE (geom);
 
@@ -307,6 +311,7 @@ JOIN raw.wells w ON w.geom IS NOT NULL
     AND ST_Distance_Sphere(p.geom, w.geom) < getvariable('plume_radius')
 WHERE p.latitude BETWEEN getvariable('lat_min') AND getvariable('lat_max')
   AND p.longitude BETWEEN getvariable('lon_min') AND getvariable('lon_max')
+  AND (p.latitude <= 32.0 OR p.longitude >= getvariable('nm_border_lon'))
   AND NOT EXISTS (
     SELECT 1 FROM raw.excluded_facilities ef
     WHERE ef.geom IS NOT NULL
@@ -328,6 +333,7 @@ JOIN flaring.sites fs
     AND ST_Distance_Sphere(p.geom, fs.geom) < getvariable('plume_radius')
 WHERE p.latitude BETWEEN getvariable('lat_min') AND getvariable('lat_max')
   AND p.longitude BETWEEN getvariable('lon_min') AND getvariable('lon_max')
+  AND (p.latitude <= 32.0 OR p.longitude >= getvariable('nm_border_lon'))
   AND NOT fs.near_excluded_facility;
 
 -- Attributed plumes: classified as flaring/unlit/wellpad/unmatched
@@ -362,7 +368,8 @@ LEFT JOIN (SELECT * FROM flaring.plume_wells WHERE rank = 1) pw USING (plume_id)
 LEFT JOIN plume_vnf pv USING (plume_id)
 LEFT JOIN raw.operators o ON LPAD(o.operator_number, 6, '0') = LPAD(pw.operator_no, 6, '0')
 WHERE p.latitude BETWEEN getvariable('lat_min') AND getvariable('lat_max')
-  AND p.longitude BETWEEN getvariable('lon_min') AND getvariable('lon_max');
+  AND p.longitude BETWEEN getvariable('lon_min') AND getvariable('lon_max')
+  AND (p.latitude <= 32.0 OR p.longitude >= getvariable('nm_border_lon'));
 
 -- Summary views
 
