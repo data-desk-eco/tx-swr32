@@ -77,6 +77,7 @@ function addEmptySources() {
     map.addSource('plumes', { type: 'geojson', data: empty });
     map.addSource('wells', { type: 'geojson', data: empty });
     map.addSource('flare-pixels', { type: 'geojson', data: empty });
+    map.addSource('s2-detections', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
 }
 
 function addLayers() {
@@ -184,6 +185,21 @@ function addLayers() {
             'circle-stroke-color': flareColorRamp,
             'circle-stroke-opacity': ['interpolate', ['linear'], ['zoom'], 13, 1, 15, 0]
         }
+    });
+
+    // Sentinel-2 detection points (visible during/after enhance)
+    map.addLayer({
+        id: 's2-points',
+        type: 'circle',
+        source: 's2-detections',
+        paint: {
+            'circle-radius': ['interpolate', ['linear'], ['get', 'max_b12'],
+                0.5, 4, 1.0, 6, 1.5, 8],
+            'circle-color': ['interpolate', ['linear'], ['get', 'max_b12'],
+                0.5, '#ffaa00', 0.8, '#ff6600', 1.0, '#ff2200', 1.5, '#ffffff'],
+            'circle-stroke-width': 1,
+            'circle-stroke-color': 'rgba(255,255,255,0.5)',
+        },
     });
 }
 
