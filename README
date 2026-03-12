@@ -1,26 +1,30 @@
 Gaslight
 
-Identifies unpermitted ("dark") flaring in the Permian Basin by
-cross-referencing satellite detections with public permit records.
+Upstream flaring analysis for the Permian Basin. Cross-references
+satellite detections with public permit records, well locations,
+and methane plume observations.
 
   VIIRS Nightfire (satellite flares)
+  + Sentinel-2 (20m resolution imagery)
   + SWR 32 exception permits (Texas RRC)
   + RRC well locations (EBCDIC bulk files)
   + OTLS survey polygons (lease boundaries)
   + Carbon Mapper / IMEO methane plumes
   ─────────────────────────────────────
-  → dark flaring analysis + interactive map
+  → flaring analysis + interactive map
 
 
 How It Works
 
 For each satellite-detected flare, gaslight finds permits and wells
-within 375m (the VIIRS M-band pixel radius). If any nearby permit
-covers the detection date, it's "permitted"; otherwise it's "dark".
+within 375m (the VIIRS M-band pixel radius). Operator attribution
+uses combined evidence from permits and wells — permits take priority;
+confidence is sole/majority/contested based on how dominant the
+attributed operator is across all nearby records.
 
-Operator attribution uses combined evidence from permits and wells.
-Permits take priority; confidence is sole/majority/contested based
-on how dominant the attributed operator is across all nearby records.
+Sentinel-2 enhancement runs per-flare deep analysis at 20m resolution,
+clustering detections and matching them to nearby permits for permit
+coverage analysis.
 
 Leases are built from OTLS survey polygons containing each lease's
 wells. VNF sites within a lease footprint get allocated to that
@@ -62,10 +66,11 @@ Scrapers
 Project Structure
 
   scripts/            Scrapers, parsers, fetchers
-  queries/            SQL pipeline (schema → load → transform → views → export)
+  queries/            SQL pipeline (load → rrc → flaring → export)
   data/               Database, CSVs, parquets (gitignored)
   web/                Interactive map (MapLibre GL + DuckDB WASM)
     vendor/           Vendored JS deps (maplibre-gl, duckdb-wasm, fonts)
+    vendor/s2-flares/ Sentinel-2 detection library (git submodule)
     data/             Exported parquets (flares, permits, wells, plumes, detections)
 
 Zero npm dependencies. MapLibre GL and DuckDB WASM are vendored
