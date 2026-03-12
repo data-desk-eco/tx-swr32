@@ -2,8 +2,15 @@
 set -euo pipefail
 
 VENDOR="web/vendor"
+# Preserve s2-flares submodule when re-vendoring
+if [ -d "$VENDOR/s2-flares" ]; then
+    mv "$VENDOR/s2-flares" /tmp/_s2-flares-preserve
+fi
 rm -rf "$VENDOR"
 mkdir -p "$VENDOR/duckdb" "$VENDOR/fonts"
+if [ -d /tmp/_s2-flares-preserve ]; then
+    mv /tmp/_s2-flares-preserve "$VENDOR/s2-flares"
+fi
 
 UA='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
 
