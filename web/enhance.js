@@ -2,9 +2,8 @@
 // Spawns s2-flares Web Worker, streams detections to map, clusters incrementally.
 
 let worker = null;
-let state = { enhancing: false, progress: null, detections: [], clusters: null, error: null, currentImage: null };
+let state = { enhancing: false, progress: null, detections: [], clusters: null, error: null };
 let onUpdate = null;  // callback for UI updates
-let onImageStart = null; // callback for status bar
 
 const CACHE_PREFIX = 's2:';
 const clusterIndex = new Map(); // id → cluster object (with detections)
@@ -163,11 +162,6 @@ export function enhance(flare, map) {
     worker.onmessage = (e) => {
         const msg = e.data;
         switch (msg.type) {
-            case 'image-start':
-                state.currentImage = msg.id;
-                onImageStart?.(msg.id);
-                break;
-
             case 'detections':
                 // Clip to request bbox and append
                 const clipped = msg.features.filter(d =>
@@ -202,7 +196,6 @@ export function enhance(flare, map) {
 
             case 'done':
                 state.enhancing = false;
-                state.currentImage = null;
                 saveCache(p.flare_id, state.detections, state.clusters, processedDates, true);
                 refreshS2Source(map);
                 onUpdate?.(state);
@@ -230,7 +223,7 @@ export function cancelEnhance(map) {
         worker.terminate();
         worker = null;
     }
-    state = { enhancing: false, progress: null, detections: [], clusters: null, error: null, currentImage: null };
+    state = { enhancing: false, progress: null, detections: [], clusters: null, error: null };
     activeFlareId = null;
     // Restore global cached S2 data
     refreshS2Source(map);
@@ -239,4 +232,3 @@ export function cancelEnhance(map) {
 
 export function getState() { return state; }
 export function isEnhancing() { return state.enhancing; }
-export function setImageStartCallback(fn) { onImageStart = fn; }

@@ -33,7 +33,7 @@ Pipeline: `load → rrc → flaring → export`
 3. **Operator attribution**: combined evidence from permits and wells within pixel radius. Prefers operators with permit filings, then most evidence (wells + permits), then closest distance. Confidence: `sole`/`majority`/`contested`.
 4. **Exclusions**: EPA GHGRP non-upstream facilities within 1.5km; Gas Plant permits filtered out.
 5. **Plume attribution**: Carbon Mapper + IMEO methane plumes matched to wells and VNF sites within 1km. Classified as flaring/unlit/wellpad/unmatched.
-6. **Sentinel-2 enhancement**: Per-flare deep analysis using s2-flares library. Searches Sentinel-2 archive (last year) over a 750m bbox, runs detection at 20m resolution, clusters results. Accessed via "Enhance with Sentinel-2" button in flare detail panel. Shows live permit coverage analysis by matching S2 detections to nearby permits (same shared UI as VNF view). Detections cached incrementally to localStorage; previously processed images are skipped on resume. S2 detections are first-class map features — cached detections load at startup and are clickable.
+6. **Sentinel-2 enhancement**: Per-flare deep analysis using s2-flares library. Searches Sentinel-2 archive (last year) over a 750m bbox, runs detection at 20m resolution, clusters results incrementally after each image. Accessed via "Enhance with Sentinel-2" button in flare detail panel. Each S2 cluster is a first-class map feature with its own detail card (B12 stats, timeline chart, permit coverage) and deep link (`?s2=HASH`). Clusters get a deterministic hash ID based on anchor position. Enhancement runs in the background — navigating away doesn't cancel it; only the explicit "Stop Analysis" button does. Stopped analyses resume from where they left off (worker skips already-processed dates). Results cached to localStorage with a `complete` flag distinguishing finished vs partial runs.
 
 ## Key details
 
@@ -47,7 +47,7 @@ Pipeline: `load → rrc → flaring → export`
 - **Match radius**: 375m (VIIRS M-band pixel radius = 750m / 2). Bounding box pre-filter ±0.005° (~500m).
 - **Well matching**: `flaring.site_well_matches` spatial-joins RRC wells within pixel radius alongside permits.
 - **VIIRS pixel squares**: 750m squares generated client-side in the web app for visual review of spatial matching.
-- **Deep linking**: `?flare=ID` opens VNF detail, `?flare=ID&mode=s2` opens S2 enhance view. Map position via `#map=zoom/lat/lon` (MapLibre hash).
+- **Deep linking**: `?flare=ID` opens VNF detail, `?flare=ID&mode=s2` starts S2 enhancement, `?s2=HASH` opens an S2 cluster detail card. Map position via `#map=zoom/lat/lon` (MapLibre hash).
 
 ## Commands
 

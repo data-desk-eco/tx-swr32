@@ -906,15 +906,12 @@ function showS2ClusterDetail(cluster) {
     panel.classList.remove('hidden');
 }
 
-function renderS2Chart(detections, target) {
-    const container = target || document.getElementById('intensity-chart');
+function renderS2Chart(detections) {
+    const container = document.getElementById('intensity-chart');
     if (!detections?.length) { container.innerHTML = ''; return; }
 
-    const compact = target != null; // inline chart in cluster list
-    const margin = compact
-        ? { top: 4, right: 4, bottom: 12, left: 4 }
-        : { top: 8, right: 8, bottom: 16, left: 8 };
-    const width = container.clientWidth || 400, height = compact ? 48 : 100;
+    const margin = { top: 8, right: 8, bottom: 16, left: 8 };
+    const width = container.clientWidth || 400, height = 100;
     const innerW = width - margin.left - margin.right;
     const innerH = height - margin.top - margin.bottom;
 
@@ -931,13 +928,13 @@ function renderS2Chart(detections, target) {
 
     // Month gridlines with labels
     const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    const fontSize = compact ? 7 : 9;
-    const charW = compact ? 4 : 5;
+    const fontSize = 9;
+    const charW = 5;
     const startD = new Date(minDate), endD = new Date(maxDate);
     const firstMonth = new Date(startD);
     firstMonth.setDate(1);
     firstMonth.setMonth(firstMonth.getMonth() + 1);
-    const minLabelGap = compact ? 20 : 30;
+    const minLabelGap = 30;
     const startX = margin.left, endX = width - margin.right;
     let lastLabelX = startX; // track rightmost label position
     // Start date label at left edge
@@ -963,7 +960,6 @@ function renderS2Chart(detections, target) {
     }
 
     // B12 detection dots
-    const dotR = compact ? 1.5 : 2;
     detections.forEach(det => {
         const date = new Date(det.date).getTime();
         const x = margin.left + ((date - minDate) / dateRange) * innerW;
@@ -971,7 +967,7 @@ function renderS2Chart(detections, target) {
         const y = margin.top + innerH - t * innerH;
         const b = det.max_b12;
         const color = b < 0.3 ? '#660800' : b < 0.5 ? '#991100' : b < 0.7 ? '#cc2200' : b < 0.9 ? '#ff4422' : b < 1.2 ? '#ff8844' : '#ffcc44';
-        svg += `<circle class="chart-dot" cx="${x}" cy="${y}" r="${dotR}" fill="${color}" opacity="0.8"/>`;
+        svg += `<circle class="chart-dot" cx="${x}" cy="${y}" r="2" fill="${color}" opacity="0.8"/>`;
     });
 
     svg += '</svg>';
