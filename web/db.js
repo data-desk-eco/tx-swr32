@@ -59,9 +59,7 @@ async function _buildOperatorIndex() {
                 FIRST(p.name ORDER BY 111.32 * sqrt(
                     power((p.latitude - f.lat) * cos(radians(f.lat)), 2) +
                     power(p.longitude - f.lon, 2)
-                )) AS nearest_permit_name,
-                MIN(CAST(p.earliest_effective AS VARCHAR)) AS earliest_effective,
-                MAX(CAST(p.latest_expiration AS VARCHAR)) AS latest_expiration
+                )) AS nearest_permit_name
             FROM 'flares.parquet' f
             JOIN 'permits.parquet' p
               ON p.latitude BETWEEN f.lat - 0.0034 AND f.lat + 0.0034
@@ -125,25 +123,16 @@ async function _buildOperatorIndex() {
                 min_distance_km AS nearest_permit_km
             FROM permit_ops
             ORDER BY flare_id, min_distance_km
-        ),
-        permit_dates AS (
-            SELECT flare_id,
-                MIN(earliest_effective) AS earliest_effective,
-                MAX(latest_expiration) AS latest_expiration
-            FROM permit_ops
-            GROUP BY flare_id
         )
         SELECT b.flare_id, b.operator_name,
             CASE WHEN a.n_operators = 1 THEN 'sole'
                  WHEN a.own_share > 0.5 THEN 'majority'
                  ELSE 'contested'
             END AS confidence,
-            np.permit_name, np.nearest_permit_km,
-            pd.earliest_effective, pd.latest_expiration
+            np.permit_name, np.nearest_permit_km
         FROM best b
         LEFT JOIN agg a USING (flare_id)
         LEFT JOIN nearest_permit np USING (flare_id)
-        LEFT JOIN permit_dates pd USING (flare_id)
     `);
     _indexReady = true;
 }
@@ -216,12 +205,15 @@ export async function queryPermits({ operator } = {}) {
     if (operator) where += ` AND lower(operator_name) LIKE '%${operator.toLowerCase().replace(/'/g, "''")}%'`;
     const result = await query(`
         SELECT latitude, longitude, name, county, district,
-            release_type, operator_name, n_filings,
-            CAST(earliest_effective AS VARCHAR) AS earliest_effective,
-            CAST(latest_expiration AS VARCHAR) AS latest_expiration,
-            max_release_rate_mcf_day, total_permitted_days, exception_reasons
+            release_type, operator_name,
+            count(*) AS n_filings,
+            MIN(effective_dt) AS earliest_effective,
+            MAX(expiration_dt) AS latest_expiration,
+            MAX(release_rate_mcf_day) AS max_release_rate_mcf_day
         FROM 'permits.parquet'
         ${where}
+        GROUP BY latitude, longitude, name, county, district,
+            release_type, operator_name
     `);
     const data = rows(result);
     return {
@@ -234,11 +226,36 @@ export async function queryPermits({ operator } = {}) {
     };
 }
 
+export async function queryPermitFilings(lat, lon, { radiusKm = 0.375, name, operator } = {}) {
+    const { dLat, dLon } = bboxDeltas(lat, radiusKm);
+    let where = `latitude BETWEEN ${lat - dLat} AND ${lat + dLat}
+          AND longitude BETWEEN ${lon - dLon} AND ${lon + dLon}
+          AND 111.32 * sqrt(
+              power((latitude - ${lat}) * cos(radians(${lat})), 2) +
+              power(longitude - (${lon}), 2)
+          ) <= ${radiusKm}`;
+    if (name) where += ` AND name = '${name.replace(/'/g, "''")}'`;
+    if (operator) where += ` AND operator_name = '${operator.replace(/'/g, "''")}'`;
+    const result = await query(`
+        SELECT filing_no, name, operator_name, district, county, release_type,
+            status, effective_dt, expiration_dt, release_rate_mcf_day,
+            exception_reasons, latitude, longitude,
+            111.32 * sqrt(
+                power((latitude - ${lat}) * cos(radians(${lat})), 2) +
+                power(longitude - (${lon}), 2)
+            ) AS distance_km
+        FROM 'permits.parquet'
+        WHERE ${where}
+        ORDER BY effective_dt
+    `);
+    return rows(result);
+}
+
 export async function queryOperator(flareId, lat, lon) {
     if (_indexReady) {
         const result = await query(`
             SELECT operator_name, confidence, permit_name,
-                nearest_permit_km, earliest_effective, latest_expiration
+                nearest_permit_km
             FROM flare_operators
             WHERE flare_id = ${Number(flareId)}
         `);
@@ -262,9 +279,7 @@ export async function queryOperatorByLocation(lat, lon) {
                 FIRST(name ORDER BY 111.32 * sqrt(
                     power((latitude - ${lat}) * cos(radians(${lat})), 2) +
                     power(longitude - (${lon}), 2)
-                )) AS nearest_permit_name,
-                MIN(CAST(earliest_effective AS VARCHAR)) AS earliest_effective,
-                MAX(CAST(latest_expiration AS VARCHAR)) AS latest_expiration
+                )) AS nearest_permit_name
             FROM 'permits.parquet'
             WHERE latitude BETWEEN ${lat - dLat} AND ${lat + dLat}
               AND longitude BETWEEN ${lon - dLon} AND ${lon + dLon}
@@ -320,11 +335,6 @@ export async function queryOperatorByLocation(lat, lon) {
             FROM permit_ops
             ORDER BY min_distance_km
             LIMIT 1
-        ),
-        permit_dates AS (
-            SELECT MIN(earliest_effective) AS earliest_effective,
-                MAX(latest_expiration) AS latest_expiration
-            FROM permit_ops
         )
         SELECT b.operator_name,
             CASE WHEN a.n_operators = 1 THEN 'sole'
@@ -332,12 +342,9 @@ export async function queryOperatorByLocation(lat, lon) {
                  ELSE 'contested'
             END AS confidence,
             np.nearest_permit_name AS permit_name,
-            np.nearest_permit_km,
-            pd.earliest_effective,
-            pd.latest_expiration
+            np.nearest_permit_km
         FROM best b, agg a
         LEFT JOIN nearest_permit np ON true
-        LEFT JOIN permit_dates pd ON true
     `);
     const r = rows(result);
     return r.length > 0 ? r[0] : null;
@@ -347,9 +354,7 @@ export async function queryNearbyPermits(lat, lon, radiusKm = 0.75) {
     const { dLat, dLon } = bboxDeltas(lat, radiusKm);
     const result = await query(`
         SELECT name, operator_name, district, county, release_type,
-            CAST(earliest_effective AS VARCHAR) AS earliest_effective,
-            CAST(latest_expiration AS VARCHAR) AS latest_expiration,
-            n_filings, latitude, longitude
+            effective_dt, expiration_dt, latitude, longitude
         FROM 'permits.parquet'
         WHERE latitude BETWEEN ${lat - dLat} AND ${lat + dLat}
           AND longitude BETWEEN ${lon - dLon} AND ${lon + dLon}
@@ -361,9 +366,7 @@ export async function queryNearestPermit(lat, lon, radiusKm = 0.375) {
     const { dLat, dLon } = bboxDeltas(lat, radiusKm);
     const result = await query(`
         SELECT name, operator_name, district, county, release_type,
-            CAST(earliest_effective AS VARCHAR) AS earliest_effective,
-            CAST(latest_expiration AS VARCHAR) AS latest_expiration,
-            n_filings,
+            effective_dt, expiration_dt,
             latitude, longitude,
             111.32 * sqrt(
                 power((latitude - ${lat}) * cos(radians(${lat})), 2) +

@@ -1,4 +1,4 @@
-import * as db from './db.js?v=5';
+import * as db from './db.js?v=6';
 import { enhance, cancelEnhance, setUpdateCallback, getState, loadAllCached, getCluster, isEnhancing } from './enhance.js?v=4';
 import * as drawer from './drawer.js?v=2';
 import { searchSTAC } from './vendor/s2-flares/stac.js';
@@ -127,8 +127,6 @@ map.on('load', async () => {
         }
     });
 
-    // Build operator index in background (enables search + detail attribution)
-    db.buildOperatorIndex();
 });
 
 function addEmptySources() {
@@ -473,11 +471,16 @@ function bindUI() {
         const sorted = [...raw].sort((a, b) => (PIXEL_LAYERS.has(a.layer.id) ? 1 : 0) - (PIXEL_LAYERS.has(b.layer.id) ? 1 : 0));
         for (const f of sorted) {
             const isS2 = f.layer.id === 's2-points';
-            const key = isS2 && f.properties.id
-                ? `s2:${f.properties.id}`
-                : f.properties.flare_id != null
-                    ? `flare:${f.properties.flare_id}`
-                    : `${f.layer.id}:${f.id}`;
+            const p = f.properties;
+            const key = isS2 && p.id
+                ? `s2:${p.id}`
+                : p.flare_id != null
+                    ? `flare:${p.flare_id}`
+                    : p.plume_id != null
+                        ? `plume:${p.plume_id}`
+                        : p.name != null && p.latitude != null
+                            ? `permit:${p.latitude}_${p.longitude}_${p.name}`
+                            : `${f.layer.id}:${f.id}`;
             if (seen.has(key)) continue;
             seen.add(key);
             features.push(f);
@@ -783,36 +786,81 @@ function flareStatus(p) {
     return { status: null, label: null };
 }
 
-function operatorInfo(op, firstDetected, lastDetected) {
-    if (!op) return { operator: null, confidence: null, permitName: null, distanceKm: null, firstDetected, lastDetected };
+// Merge overlapping/adjacent date ranges into a sorted list of non-overlapping intervals
+function mergeRanges(filings) {
+    const ranges = filings
+        .filter(f => f.effective_dt)
+        .map(f => [f.effective_dt, f.expiration_dt || '9999-12-31'])
+        .sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
+    if (ranges.length === 0) return [];
+    const merged = [ranges[0].slice()];
+    for (let i = 1; i < ranges.length; i++) {
+        const prev = merged[merged.length - 1];
+        if (ranges[i][0] <= prev[1]) {
+            if (ranges[i][1] > prev[1]) prev[1] = ranges[i][1];
+        } else {
+            merged.push(ranges[i].slice());
+        }
+    }
+    return merged;
+}
+
+// Compute permit coverage for a detection window given nearby filings
+function computeCoverage(filings, firstDetected, lastDetected) {
+    if (!firstDetected || !lastDetected || filings.length === 0) return null;
+    const merged = mergeRanges(filings);
+    if (merged.length === 0) return { status: 'uncovered', gaps: null };
+
+    // Find gaps within the detection window
+    const gaps = [];
+    let cursor = firstDetected;
+    for (const [start, end] of merged) {
+        if (start > cursor && start <= lastDetected) {
+            gaps.push([cursor, start]);
+        }
+        if (end > cursor) cursor = end;
+    }
+    if (cursor < lastDetected) {
+        gaps.push([cursor, lastDetected]);
+    }
+
+    // Check if detection window is covered at all
+    const firstCovered = merged.some(([s, e]) => s <= firstDetected && e >= firstDetected);
+    const lastCovered = merged.some(([s, e]) => s <= lastDetected && e >= lastDetected);
+    if (firstCovered && lastCovered && gaps.length === 0) {
+        return { status: 'covered', gaps: null };
+    }
+    return { status: gaps.length > 0 ? 'gap' : 'partial', gaps };
+}
+
+function operatorInfo(op) {
+    if (!op) return { operator: null, confidence: null, permitName: null, distanceKm: null };
     const confidence = op.confidence ? op.confidence.charAt(0).toUpperCase() + op.confidence.slice(1) : null;
     const distanceKm = op.nearest_permit_km != null ? Number(op.nearest_permit_km) : null;
-    let covered = null;
-    if (distanceKm != null && distanceKm <= 0.375) {
-        covered = firstDetected && op.earliest_effective <= firstDetected
-            && (!op.latest_expiration || op.latest_expiration >= lastDetected);
-    }
     return {
         operator: op.operator_name,
         confidence,
         permitName: op.permit_name || null,
         distanceKm,
-        firstDetected,
-        lastDetected,
-        covered,
-        permitDates: distanceKm != null && distanceKm <= 0.375
-            ? (op.earliest_effective || '?') + ' → ' + (op.latest_expiration || 'open')
-            : null,
     };
 }
 
-function permitCoverageHtml(info) {
+function permitCoverageHtml(info, coverage, firstDetected, lastDetected) {
     if (!info) return '';
-    const coverageLabel = info.covered === true
-        ? '<span class="permit-covered">Covered</span>'
-        : info.covered === false
-            ? '<span class="permit-uncovered">Uncovered</span>'
-            : null;
+    let coverageLabel = '';
+    if (coverage) {
+        if (coverage.status === 'covered')
+            coverageLabel = '<span class="permit-covered">Covered</span>';
+        else if (coverage.status === 'gap')
+            coverageLabel = '<span class="permit-uncovered">Gap in coverage</span>';
+        else if (coverage.status === 'partial')
+            coverageLabel = '<span class="permit-uncovered">Partial</span>';
+        else
+            coverageLabel = '<span class="permit-uncovered">Uncovered</span>';
+    }
+    const gapHtml = coverage?.gaps?.length
+        ? coverage.gaps.map(([a, b]) => `${formatDate(a)} – ${formatDate(b)}`).join('<br>')
+        : '';
     return `
         <div class="detail-row">
             ${field('Operator', info.operator || 'N/A')}
@@ -820,11 +868,11 @@ function permitCoverageHtml(info) {
             ${field('Nearest permit', info.permitName || 'None')}
             ${field('Distance', info.distanceKm != null ? info.distanceKm.toFixed(2) + ' km' : 'N/A')}
             ${coverageLabel ? field('Coverage', coverageLabel) : ''}
-            ${info.permitDates ? field('Permit dates', info.permitDates) : ''}
+            ${gapHtml ? field('Gaps', gapHtml) : ''}
         </div>
         <div class="detail-row">
-            ${field('First detected', formatDate(info.firstDetected))}
-            ${field('Last detected', formatDate(info.lastDetected))}
+            ${field('First detected', formatDate(firstDetected))}
+            ${field('Last detected', formatDate(lastDetected))}
         </div>
     `;
 }
@@ -849,10 +897,16 @@ async function showFlareDetail(feature) {
         badge.classList.remove('hidden');
     }
 
-    // Operator attribution (async — falls back to spatial query if index not ready)
-    db.queryOperator(p.flare_id, Number(p.lat), Number(p.lon)).then(op => {
+    // Operator attribution + permit coverage (async, parallel)
+    Promise.all([
+        db.queryOperator(p.flare_id, Number(p.lat), Number(p.lon)),
+        db.queryPermitFilings(Number(p.lat), Number(p.lon)),
+    ]).then(([op, filings]) => {
         const el = $('vnf-operator-section');
-        if (el) el.innerHTML = permitCoverageHtml(operatorInfo(op, p.first_detected, p.last_detected));
+        if (!el) return;
+        const info = operatorInfo(op);
+        const coverage = computeCoverage(filings, p.first_detected, p.last_detected);
+        el.innerHTML = permitCoverageHtml(info, coverage, p.first_detected, p.last_detected);
     }).catch(() => {});
 
     // Leases (async)
@@ -886,7 +940,7 @@ function showPermitDetail(feature) {
     openDetail(p.name || 'Permit location', p.latitude, p.longitude, `
         <div class="stats-grid">
             <div class="stat"><div class="stat-big">${rate > 0 ? rate.toLocaleString() : 'N/A'}</div><div class="stat-unit">max Mcf/day</div></div>
-            <div class="stat"><div class="stat-big">${Number(p.n_filings)}</div><div class="stat-unit">filings</div></div>
+            <div class="stat"><div class="stat-big" id="permit-filings-count">${Number(p.n_filings)}</div><div class="stat-unit">filings</div></div>
         </div>
         <div class="detail-row">
             ${field('Operator', p.operator_name || 'N/A')}
@@ -894,12 +948,25 @@ function showPermitDetail(feature) {
             ${field('District', p.district || 'N/A')}
             ${field('Release type', p.release_type || 'N/A')}
         </div>
-        <div class="detail-row">
-            ${field('Earliest effective', formatDate(p.earliest_effective))}
-            ${field('Latest expiration', formatDate(p.latest_expiration))}
-        </div>
-        ${p.exception_reasons ? `<div class="detail-row">${field('Reasons', p.exception_reasons.split('; ').join(' / '))}</div>` : ''}
+        <div id="permit-filings-section"></div>
     `);
+
+    // Load individual filings for this specific permit
+    db.queryPermitFilings(Number(p.latitude), Number(p.longitude), { radiusKm: 0.01, name: p.name, operator: p.operator_name }).then(filings => {
+        const el = $('permit-filings-section');
+        if (!el || filings.length === 0) return;
+        const countEl = $('permit-filings-count');
+        if (countEl) countEl.textContent = filings.length;
+        const filingsHtml = filings.map(f =>
+            `<div class="detail-row filing-row">
+                ${field('Effective', formatDate(f.effective_dt))}
+                ${field('Expiration', formatDate(f.expiration_dt))}
+                ${f.status ? field('Status', f.status) : ''}
+                ${f.exception_reasons ? field('Reasons', f.exception_reasons) : ''}
+            </div>`
+        ).join('');
+        el.innerHTML = `<div class="filings-list">${filingsHtml}</div>`;
+    }).catch(() => {});
 }
 
 function plumeUrl(source, id) {
@@ -1075,9 +1142,16 @@ function showS2ClusterDetail(cluster) {
 
     // Operator attribution — find nearest flare's operator, or do spatial lookup
     const dates = (cluster.detections || []).map(d => d.date).filter(Boolean).sort();
-    db.queryOperatorByLocation(cluster.lat, cluster.lon).then(op => {
+    const firstDate = dates[0] || null, lastDate = dates[dates.length - 1] || null;
+    Promise.all([
+        db.queryOperatorByLocation(cluster.lat, cluster.lon),
+        db.queryPermitFilings(cluster.lat, cluster.lon),
+    ]).then(([op, filings]) => {
         const el = $('s2-permit-section');
-        if (el) el.innerHTML = permitCoverageHtml(operatorInfo(op, dates[0] || null, dates[dates.length - 1] || null));
+        if (!el) return;
+        const info = operatorInfo(op);
+        const coverage = computeCoverage(filings, firstDate, lastDate);
+        el.innerHTML = permitCoverageHtml(info, coverage, firstDate, lastDate);
     }).catch(() => {});
 
     panel.classList.remove('hidden');

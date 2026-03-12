@@ -90,17 +90,15 @@ COPY (
         AND LPAD(lf.lease_number, 6, '0') = LPAD(sl.lease_number, 6, '0')
 ) TO 'web/data/leases.parquet' (FORMAT PARQUET, COMPRESSION ZSTD);
 
--- Permits parquet (upstream permit locations, excludes gas plants)
+-- Permits parquet (one row per filing, excludes gas plants)
 COPY (
     SELECT
-        fl.latitude, fl.longitude, fl.name, fl.county, fl.district, fl.release_type,
-        p.operator_name,
-        count(DISTINCT fl.filing_no) AS n_filings,
-        min(p.effective_dt) AS earliest_effective,
-        max(p.expiration_dt) AS latest_expiration,
-        round(max(COALESCE(plm.release_rate_mcf_day, 0)), 0) AS max_release_rate_mcf_day,
-        sum(GREATEST(COALESCE(p.expiration_dt - p.effective_dt, 0), 0)) AS total_permitted_days,
-        array_to_string(list_sort(list_distinct(flatten(list(string_split(p.exception_reasons, ';'))))), '; ') AS exception_reasons
+        fl.filing_no, fl.latitude, fl.longitude, fl.name, fl.county, fl.district,
+        fl.release_type, p.operator_name, p.status,
+        CAST(p.effective_dt AS VARCHAR) AS effective_dt,
+        CAST(p.expiration_dt AS VARCHAR) AS expiration_dt,
+        round(COALESCE(plm.release_rate_mcf_day, 0), 0) AS release_rate_mcf_day,
+        p.exception_reasons
     FROM raw.flare_locations fl
     JOIN rrc.permits p ON p.filing_no = fl.filing_no
     LEFT JOIN (
@@ -111,8 +109,6 @@ COPY (
       AND fl.filing_no NOT IN (SELECT filing_no FROM raw.permits WHERE property_type = 'Gas Plant')
       AND COALESCE(fl.facility_type, '') NOT ILIKE '%gas plant%'
       AND in_permian(fl.latitude, fl.longitude)
-    GROUP BY fl.latitude, fl.longitude, fl.name, fl.county, fl.district,
-        fl.release_type, p.operator_name
 ) TO 'web/data/permits.parquet' (FORMAT PARQUET, COMPRESSION ZSTD);
 
 -- Plumes parquet
