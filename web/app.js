@@ -817,11 +817,18 @@ function showEnhanceDetail(feature) {
                 list.className = 'enhance-results';
                 list.innerHTML = s.clusters.map(c =>
                     `<div class="enhance-cluster" data-id="${c.id}">
-                        <span class="cluster-dot"></span>
-                        B12 ${c.max_b12.toFixed(2)} · ${c.detection_count} det · ${c.first_date}${c.first_date !== c.last_date ? ` – ${c.last_date}` : ''}
+                        <div class="cluster-header">
+                            <span class="cluster-dot"></span>
+                            B12 ${c.max_b12.toFixed(2)} · ${c.detection_count} det · ${c.first_date}${c.first_date !== c.last_date ? ` – ${c.last_date}` : ''}
+                        </div>
+                        <div class="cluster-chart"></div>
                     </div>`
                 ).join('');
                 list.querySelectorAll('.enhance-cluster').forEach(el => {
+                    const c = getCluster(el.dataset.id);
+                    if (c?.detections?.length) {
+                        renderS2Chart(c.detections, el.querySelector('.cluster-chart'));
+                    }
                     el.addEventListener('click', () => {
                         const cluster = getCluster(el.dataset.id);
                         if (cluster) {
@@ -896,12 +903,15 @@ function showS2ClusterDetail(cluster) {
     panel.classList.remove('hidden');
 }
 
-function renderS2Chart(detections) {
-    const container = document.getElementById('intensity-chart');
+function renderS2Chart(detections, target) {
+    const container = target || document.getElementById('intensity-chart');
     if (!detections?.length) { container.innerHTML = ''; return; }
 
-    const margin = { top: 8, right: 8, bottom: 16, left: 8 };
-    const width = container.clientWidth || 400, height = 100;
+    const compact = target != null; // inline chart in cluster list
+    const margin = compact
+        ? { top: 4, right: 4, bottom: 12, left: 4 }
+        : { top: 8, right: 8, bottom: 16, left: 8 };
+    const width = container.clientWidth || 400, height = compact ? 48 : 100;
     const innerW = width - margin.left - margin.right;
     const innerH = height - margin.top - margin.bottom;
 
@@ -918,36 +928,39 @@ function renderS2Chart(detections) {
 
     // Month gridlines with labels
     const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const fontSize = compact ? 7 : 9;
+    const charW = compact ? 4 : 5;
     const startD = new Date(minDate), endD = new Date(maxDate);
     const firstMonth = new Date(startD);
     firstMonth.setDate(1);
     firstMonth.setMonth(firstMonth.getMonth() + 1);
-    const minLabelGap = 30; // minimum pixels between labels
+    const minLabelGap = compact ? 20 : 30;
     const startX = margin.left, endX = width - margin.right;
     let lastLabelX = startX; // track rightmost label position
     // Start date label at left edge
     const startLabel = `${MONTHS[startD.getMonth()]} ${startD.getFullYear()}`;
-    svg += `<text x="${startX}" y="${height - 2}" fill="rgba(255,255,255,0.35)" font-size="9" text-anchor="start">${startLabel}</text>`;
-    lastLabelX = startX + startLabel.length * 5; // approximate text width
+    svg += `<text x="${startX}" y="${height - 2}" fill="rgba(255,255,255,0.35)" font-size="${fontSize}" text-anchor="start">${startLabel}</text>`;
+    lastLabelX = startX + startLabel.length * charW;
     for (let d = new Date(firstMonth); d <= endD; d.setMonth(d.getMonth() + 1)) {
         const t = d.getTime();
         const x = margin.left + ((t - minDate) / dateRange) * innerW;
         const isJan = d.getMonth() === 0;
         svg += `<line x1="${x}" y1="${margin.top}" x2="${x}" y2="${height - margin.bottom}" stroke="rgba(255,255,255,${isJan ? 0.15 : 0.06})" stroke-width="1"/>`;
         const label = isJan ? `${MONTHS[0]} ${d.getFullYear()}` : MONTHS[d.getMonth()];
-        const labelW = label.length * 5;
+        const labelW = label.length * charW;
         if (x - labelW / 2 > lastLabelX + minLabelGap && x + labelW / 2 < endX - minLabelGap) {
-            svg += `<text x="${x}" y="${height - 2}" fill="rgba(255,255,255,${isJan ? 0.4 : 0.25})" font-size="9" text-anchor="middle">${label}</text>`;
+            svg += `<text x="${x}" y="${height - 2}" fill="rgba(255,255,255,${isJan ? 0.4 : 0.25})" font-size="${fontSize}" text-anchor="middle">${label}</text>`;
             lastLabelX = x + labelW / 2;
         }
     }
     // End date label at right edge (skip if too close to last gridline label)
     const endLabel = `${MONTHS[endD.getMonth()]} ${endD.getFullYear()}`;
-    if (endLabel !== startLabel && endX - endLabel.length * 5 > lastLabelX + minLabelGap) {
-        svg += `<text x="${endX}" y="${height - 2}" fill="rgba(255,255,255,0.35)" font-size="9" text-anchor="end">${endLabel}</text>`;
+    if (endLabel !== startLabel && endX - endLabel.length * charW > lastLabelX + minLabelGap) {
+        svg += `<text x="${endX}" y="${height - 2}" fill="rgba(255,255,255,0.35)" font-size="${fontSize}" text-anchor="end">${endLabel}</text>`;
     }
 
     // B12 detection dots
+    const dotR = compact ? 1.5 : 2;
     detections.forEach(det => {
         const date = new Date(det.date).getTime();
         const x = margin.left + ((date - minDate) / dateRange) * innerW;
@@ -955,7 +968,7 @@ function renderS2Chart(detections) {
         const y = margin.top + innerH - t * innerH;
         const b = det.max_b12;
         const color = b < 0.3 ? '#660800' : b < 0.5 ? '#991100' : b < 0.7 ? '#cc2200' : b < 0.9 ? '#ff4422' : b < 1.2 ? '#ff8844' : '#ffcc44';
-        svg += `<circle class="chart-dot" cx="${x}" cy="${y}" r="2" fill="${color}" opacity="0.8"/>`;
+        svg += `<circle class="chart-dot" cx="${x}" cy="${y}" r="${dotR}" fill="${color}" opacity="0.8"/>`;
     });
 
     svg += '</svg>';

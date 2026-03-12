@@ -127,6 +127,10 @@ export function enhance(flare, map) {
     // Check cache — if complete (has clusters), use directly; otherwise seed and continue
     const cached = loadCache(p.flare_id);
     if (cached?.clusters) {
+        // Backfill ids for old cache entries
+        for (const c of cached.clusters) {
+            if (!c.id) c.id = clusterHash(c.lat, c.lon);
+        }
         state = { enhancing: false, progress: null, detections: cached.detections, clusters: cached.clusters, error: null };
         refreshS2Source(map);
         onUpdate?.(state);
