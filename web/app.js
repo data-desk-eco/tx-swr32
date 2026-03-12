@@ -1,6 +1,6 @@
-import * as db from './db.js?v=4';
-import { enhance, cancelEnhance, setUpdateCallback, getState, loadAllCached, getCluster, isEnhancing } from './enhance.js?v=3';
-import * as drawer from './drawer.js?v=1';
+import * as db from './db.js?v=5';
+import { enhance, cancelEnhance, setUpdateCallback, getState, loadAllCached, getCluster, isEnhancing } from './enhance.js?v=4';
+import * as drawer from './drawer.js?v=2';
 import { searchSTAC } from './vendor/s2-flares/stac.js';
 import { openCOG } from './vendor/s2-flares/cog.js';
 import { wgs84ToUtm, utmToWgs84, utmParams } from './vendor/s2-flares/geo.js';
