@@ -1,5 +1,5 @@
 import * as db from './db.js?v=3';
-import { enhance, cancelEnhance, setUpdateCallback, getState, loadAllCached, getCluster } from './enhance.js?v=3';
+import { enhance, cancelEnhance, setUpdateCallback, getState, loadAllCached, getCluster, isEnhancing } from './enhance.js?v=3';
 
 const COLORS = {
     flare: '#ffaa44',
@@ -520,18 +520,21 @@ function closeDetail() {
 }
 
 function showFeatureDetail(feature) {
-    cancelEnhance(map);
     removeS2Badge();
     const layer = feature.layer.id;
-    if (layer.startsWith('flare')) showFlareDetail(feature);
-    else if (layer === 's2-points') {
+    if (layer === 's2-points') {
+        // Don't cancel enhance — let it run in background
         const cluster = getCluster(feature.properties.id);
         if (cluster) showS2ClusterDetail(cluster);
     } else {
-        updateFlareUrl(null);
-        if (layer.startsWith('permits-')) showPermitDetail(feature);
-        else if (layer.startsWith('plumes-')) showPlumeDetail(feature);
-        else if (layer.startsWith('wells-')) showWellDetail(feature);
+        cancelEnhance(map);
+        if (layer.startsWith('flare')) showFlareDetail(feature);
+        else {
+            updateFlareUrl(null);
+            if (layer.startsWith('permits-')) showPermitDetail(feature);
+            else if (layer.startsWith('plumes-')) showPlumeDetail(feature);
+            else if (layer.startsWith('wells-')) showWellDetail(feature);
+        }
     }
 
     // Update overlap nav — only for overlapping permits
@@ -790,8 +793,30 @@ function showEnhanceDetail(feature) {
 
     document.getElementById('overlap-nav').classList.add('hidden');
     document.getElementById('intensity-chart').innerHTML = '';
-    document.getElementById('detail-body').innerHTML = '<div id="s2-cluster-list"></div>';
+    document.getElementById('detail-body').innerHTML = `
+        <div id="s2-stop-section"></div>
+        <div id="s2-cluster-list"></div>
+    `;
     panel.classList.remove('hidden');
+
+    function renderStopButton() {
+        const section = document.getElementById('s2-stop-section');
+        if (!section) return;
+        if (isEnhancing()) {
+            if (!section.querySelector('.stop-analysis-btn')) {
+                const btn = document.createElement('button');
+                btn.className = 'stop-analysis-btn';
+                btn.textContent = 'Stop Analysis';
+                btn.addEventListener('click', () => {
+                    cancelEnhance(map);
+                    btn.remove();
+                });
+                section.appendChild(btn);
+            }
+        } else {
+            section.innerHTML = '';
+        }
+    }
 
     // Wire up live updates before starting (cache path fires synchronously)
     setUpdateCallback((s) => {
@@ -807,6 +832,8 @@ function showEnhanceDetail(feature) {
             s2b.textContent = 'Failed';
         }
 
+        renderStopButton();
+
         // Update cluster list (live during enhancement and on completion)
         if (s.clusters?.length) {
             if (!s.enhancing) {
@@ -817,11 +844,11 @@ function showEnhanceDetail(feature) {
                 list.className = 'enhance-results';
                 list.innerHTML = s.clusters.map(c =>
                     `<div class="enhance-cluster" data-id="${c.id}">
+                        <div class="cluster-chart"></div>
                         <div class="cluster-header">
                             <span class="cluster-dot"></span>
                             B12 ${c.max_b12.toFixed(2)} · ${c.detection_count} det · ${c.first_date}${c.first_date !== c.last_date ? ` – ${c.last_date}` : ''}
                         </div>
-                        <div class="cluster-chart"></div>
                     </div>`
                 ).join('');
                 list.querySelectorAll('.enhance-cluster').forEach(el => {
@@ -875,6 +902,18 @@ function showS2ClusterDetail(cluster) {
     // Timeline chart from cluster detections
     if (cluster.detections?.length) {
         renderS2Chart(cluster.detections);
+    }
+
+    // Stop button if enhancement is running in background
+    if (isEnhancing()) {
+        const stopBtn = document.createElement('button');
+        stopBtn.className = 'stop-analysis-btn';
+        stopBtn.textContent = 'Stop Analysis';
+        stopBtn.addEventListener('click', () => {
+            cancelEnhance(map);
+            stopBtn.remove();
+        });
+        document.getElementById('detail-body').appendChild(stopBtn);
     }
 
     // Permit coverage
@@ -1014,7 +1053,7 @@ function renderSparkline(detections) {
         const t = val > 0 ? Math.max(0, Math.min(1, (Math.log(Math.max(lo, val)) - Math.log(lo)) / (Math.log(hi) - Math.log(lo)))) : 0;
         const y = margin.top + innerH - t * innerH;
         const mw = det.rh_mw || 0;
-        const color = mw < 0.3 ? '#663300' : mw < 0.6 ? '#995500' : mw < 0.9 ? '#cc7700' : mw < 1.3 ? '#ff9922' : mw < 2 ? '#ffaa44' : mw < 4 ? '#ffcc66' : '#ffeeaa';
+        const color = mw < 0.3 ? '#660800' : mw < 0.6 ? '#991100' : mw < 0.9 ? '#cc3300' : mw < 1.3 ? '#ff5522' : mw < 2 ? '#ff8844' : mw < 4 ? '#ffcc66' : '#ffeeaa';
         svg += `<circle class="chart-dot" cx="${x}" cy="${y}" r="2" fill="${color}" opacity="0.8"/>`;
     });
 

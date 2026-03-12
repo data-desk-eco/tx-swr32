@@ -225,3 +225,4 @@ export function cancelEnhance(map) {
 }
 
 export function getState() { return state; }
+export function isEnhancing() { return state.enhancing; }
