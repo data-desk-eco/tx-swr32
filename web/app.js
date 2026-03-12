@@ -1,5 +1,5 @@
 import * as db from './db.js?v=3';
-import { enhance, cancelEnhance, setUpdateCallback, getState, loadAllCached } from './enhance.js?v=3';
+import { enhance, cancelEnhance, setUpdateCallback, getState, loadAllCached, getCluster } from './enhance.js?v=3';
 
 const COLORS = {
     flare: '#ffaa44',
@@ -279,14 +279,20 @@ async function loadWells() {
 }
 
 function loadCachedS2() {
-    const points = loadAllCached();
-    if (points.length === 0) return;
+    const clusters = loadAllCached(); // also rebuilds clusterIndex
+    if (clusters.length === 0) return;
     const fc = {
         type: 'FeatureCollection',
-        features: points.map(d => ({
+        features: clusters.map(d => ({
             type: 'Feature',
             geometry: { type: 'Point', coordinates: [d.lon, d.lat] },
-            properties: d,
+            properties: {
+                id: d.id, lon: d.lon, lat: d.lat,
+                max_b12: d.max_b12, avg_b12: d.avg_b12,
+                detection_count: d.detection_count, date_count: d.date_count,
+                first_date: d.first_date, last_date: d.last_date,
+                flare_id: d.flare_id,
+            },
         })),
     };
     map.getSource('s2-detections').setData(fc);
@@ -400,9 +406,11 @@ function bindUI() {
         const sorted = [...raw].sort((a, b) => (PIXEL_LAYERS.has(a.layer.id) ? 1 : 0) - (PIXEL_LAYERS.has(b.layer.id) ? 1 : 0));
         for (const f of sorted) {
             const isS2 = f.layer.id === 's2-points';
-            const key = f.properties.flare_id != null
-                ? `${isS2 ? 's2' : 'flare'}:${f.properties.flare_id}`
-                : `${f.layer.id}:${f.id}`;
+            const key = isS2 && f.properties.id
+                ? `s2:${f.properties.id}`
+                : f.properties.flare_id != null
+                    ? `flare:${f.properties.flare_id}`
+                    : `${f.layer.id}:${f.id}`;
             if (seen.has(key)) continue;
             seen.add(key);
             features.push(f);
@@ -442,6 +450,7 @@ function bindUI() {
 
 function updateFlareUrl(flareId, mode) {
     const url = new URL(window.location);
+    url.searchParams.delete('s2');
     if (flareId != null) {
         url.searchParams.set('flare', flareId);
         if (mode) url.searchParams.set('mode', mode);
@@ -453,8 +462,28 @@ function updateFlareUrl(flareId, mode) {
     history.replaceState(null, '', url);
 }
 
+function updateS2Url(s2Id) {
+    const url = new URL(window.location);
+    url.searchParams.delete('flare');
+    url.searchParams.delete('mode');
+    if (s2Id != null) url.searchParams.set('s2', s2Id);
+    else url.searchParams.delete('s2');
+    history.replaceState(null, '', url);
+}
+
 function handleDeepLink() {
     const params = new URLSearchParams(window.location.search);
+
+    const s2Id = params.get('s2');
+    if (s2Id) {
+        const cluster = getCluster(s2Id);
+        if (cluster) {
+            map.flyTo({ center: [cluster.lon, cluster.lat], zoom: 16 });
+            showS2ClusterDetail(cluster);
+        }
+        return;
+    }
+
     const flareId = params.get('flare');
     if (!flareId) return;
 
@@ -467,7 +496,6 @@ function handleDeepLink() {
     if (params.get('mode') === 's2') {
         showEnhanceDetail(feature);
     } else {
-        // Synthesize layer info so showFeatureDetail works
         feature.layer = { id: 'flares-layer' };
         showFeatureDetail(feature);
     }
@@ -485,6 +513,7 @@ function closeDetail() {
     cancelEnhance(map);
     removeS2Badge();
     updateFlareUrl(null);
+    updateS2Url(null);
     document.getElementById('detail-panel').classList.add('hidden');
     overlappingFeatures = [];
     overlapIndex = 0;
@@ -496,10 +525,8 @@ function showFeatureDetail(feature) {
     const layer = feature.layer.id;
     if (layer.startsWith('flare')) showFlareDetail(feature);
     else if (layer === 's2-points') {
-        // Find parent VNF flare and open enhance view
-        const fid = feature.properties.flare_id;
-        const parent = fid != null ? flareFeatures.find(f => f.properties.flare_id === Number(fid)) : null;
-        if (parent) showEnhanceDetail(parent);
+        const cluster = getCluster(feature.properties.id);
+        if (cluster) showS2ClusterDetail(cluster);
     } else {
         updateFlareUrl(null);
         if (layer.startsWith('permits-')) showPermitDetail(feature);
@@ -761,56 +788,16 @@ function showEnhanceDetail(feature) {
     badge.textContent = 'Enhancing';
     badge.classList.remove('hidden');
 
-    // Hide overlap nav for enhance mode
     document.getElementById('overlap-nav').classList.add('hidden');
-
     document.getElementById('intensity-chart').innerHTML = '';
-    document.getElementById('detail-body').innerHTML = `
-        <div class="stats-grid" id="s2-stats">
-            <div class="stat"><div class="stat-big" id="s2-stat-max-b12">--</div><div class="stat-unit">peak B12</div></div>
-            <div class="stat"><div class="stat-big" id="s2-stat-mean-b12">--</div><div class="stat-unit">mean B12</div></div>
-        </div>
-        <div id="s2-permit-section"></div>
-    `;
+    document.getElementById('detail-body').innerHTML = '<div id="s2-cluster-list"></div>';
     panel.classList.remove('hidden');
-
-    // Preload nearby permits for live matching
-    let nearbyPermits = [];
-    db.queryNearbyPermits(Number(p.lat), Number(p.lon)).then(permits => {
-        nearbyPermits = permits;
-        // Re-run permit display in case detections arrived before permits loaded (e.g. cache)
-        const s = getState();
-        if (s.detections.length > 0) updatePermitInfo(s.detections);
-    }).catch(() => {});
-
-    function updatePermitInfo(dets) {
-        const el = document.getElementById('s2-permit-section');
-        if (!el) return;
-        const info = permitInfoFromS2(dets, nearbyPermits);
-        el.innerHTML = permitCoverageHtml(info);
-    }
 
     // Wire up live updates before starting (cache path fires synchronously)
     setUpdateCallback((s) => {
-        // Update stats
-        const dets = s.detections;
-
-        if (dets.length > 0) {
-            const maxB12 = Math.max(...dets.map(d => d.max_b12));
-            const meanB12 = dets.reduce((sum, d) => sum + d.max_b12, 0) / dets.length;
-            document.getElementById('s2-stat-max-b12').textContent = maxB12.toFixed(2);
-            document.getElementById('s2-stat-mean-b12').textContent = meanB12.toFixed(2);
-        }
-
-        // Live-update chart
-        renderS2Chart(dets);
-
-        // Live-update permit coverage
-        updatePermitInfo(dets);
-
-        // Update S2 progress badge
         const s2b = document.getElementById('s2-badge');
         if (!s2b) return;
+
         if (s.enhancing) {
             s2b.textContent = s.progress?.total
                 ? `${s.progress.done} / ${s.progress.total}${s.progress.skipped ? ` (${s.progress.skipped} cached)` : ''}`
@@ -818,39 +805,95 @@ function showEnhanceDetail(feature) {
         } else if (s.error) {
             s2b.className = 'status-badge excluded';
             s2b.textContent = 'Failed';
-        } else if (s.clusters) {
-            s2b.textContent = `${s.clusters.length} source${s.clusters.length !== 1 ? 's' : ''}`;
+        }
 
-            // Show cluster results
-            if (!document.getElementById('s2-clusters')) {
-                const body = document.getElementById('detail-body');
-                const summary = document.createElement('div');
-                summary.id = 's2-clusters';
-                summary.className = 'enhance-results';
-                summary.innerHTML = s.clusters.map((c, i) => {
-                    const np = nearestPermit(c.lat, c.lon, nearbyPermits);
-                    const permitLabel = np && np.distance_km <= 0.375
-                        ? `<span class="permit-covered">${np.name || 'Unnamed'}</span> · ${np.distance_km.toFixed(2)} km`
-                        : '<span class="permit-uncovered">no permit</span>';
-                    return `<div class="enhance-cluster" data-idx="${i}">
+        // Update cluster list (live during enhancement and on completion)
+        if (s.clusters?.length) {
+            if (!s.enhancing) {
+                s2b.textContent = `${s.clusters.length} source${s.clusters.length !== 1 ? 's' : ''}`;
+            }
+            const list = document.getElementById('s2-cluster-list');
+            if (list) {
+                list.className = 'enhance-results';
+                list.innerHTML = s.clusters.map(c =>
+                    `<div class="enhance-cluster" data-id="${c.id}">
                         <span class="cluster-dot"></span>
-                        B12 ${c.max_b12.toFixed(2)} · ${c.detection_count} det · ${c.first_date} – ${c.last_date}
-                        <div class="cluster-permit">${permitLabel}</div>
-                    </div>`;
-                }).join('');
-                summary.querySelectorAll('.enhance-cluster').forEach(el => {
+                        B12 ${c.max_b12.toFixed(2)} · ${c.detection_count} det · ${c.first_date}${c.first_date !== c.last_date ? ` – ${c.last_date}` : ''}
+                    </div>`
+                ).join('');
+                list.querySelectorAll('.enhance-cluster').forEach(el => {
                     el.addEventListener('click', () => {
-                        const c = s.clusters[Number(el.dataset.idx)];
-                        map.flyTo({ center: [c.lon, c.lat], zoom: 17 });
+                        const cluster = getCluster(el.dataset.id);
+                        if (cluster) {
+                            map.flyTo({ center: [cluster.lon, cluster.lat], zoom: 17 });
+                            showS2ClusterDetail(cluster);
+                        }
                     });
                 });
-                body.appendChild(summary);
             }
         }
     });
 
     // Start enhancement (may resolve from cache synchronously)
     enhance(feature, map);
+}
+
+function showS2ClusterDetail(cluster) {
+    removeS2Badge();
+    const panel = document.getElementById('detail-panel');
+    updateS2Url(cluster.id);
+
+    document.getElementById('detail-title').textContent = `S2 Source ${cluster.id}`;
+    document.getElementById('detail-coords').textContent = `${cluster.lat.toFixed(4)}, ${cluster.lon.toFixed(4)}`;
+
+    const badge = document.getElementById('detail-badge');
+    badge.className = 'status-badge s2';
+    badge.textContent = `${cluster.detection_count} det`;
+    badge.classList.remove('hidden');
+
+    document.getElementById('overlap-nav').classList.add('hidden');
+    document.getElementById('intensity-chart').innerHTML = '';
+    document.getElementById('detail-body').innerHTML = `
+        <div class="stats-grid">
+            <div class="stat"><div class="stat-big">${cluster.max_b12.toFixed(2)}</div><div class="stat-unit">peak B12</div></div>
+            <div class="stat"><div class="stat-big">${cluster.avg_b12.toFixed(2)}</div><div class="stat-unit">mean B12</div></div>
+        </div>
+        <div class="detail-row">
+            ${field('First detected', formatDate(cluster.first_date))}
+            ${field('Last detected', formatDate(cluster.last_date))}
+        </div>
+        <div id="s2-permit-section"></div>
+    `;
+
+    // Timeline chart from cluster detections
+    if (cluster.detections?.length) {
+        renderS2Chart(cluster.detections);
+    }
+
+    // Permit coverage
+    db.queryNearbyPermits(cluster.lat, cluster.lon).then(permits => {
+        const info = permitInfoFromS2(cluster.detections || [], permits);
+        const el = document.getElementById('s2-permit-section');
+        if (el) el.innerHTML = permitCoverageHtml(info);
+    }).catch(() => {});
+
+    // Link to parent VNF flare
+    if (cluster.flare_id != null) {
+        const parent = flareFeatures.find(f => f.properties.flare_id === cluster.flare_id);
+        if (parent) {
+            const link = document.createElement('div');
+            link.className = 'detail-row';
+            link.innerHTML = `<a href="?flare=${cluster.flare_id}" class="vnf-link">← VNF Flare ${cluster.flare_id}</a>`;
+            link.querySelector('a').addEventListener('click', (e) => {
+                e.preventDefault();
+                parent.layer = { id: 'flares-layer' };
+                showFeatureDetail(parent);
+            });
+            document.getElementById('detail-body').appendChild(link);
+        }
+    }
+
+    panel.classList.remove('hidden');
 }
 
 function renderS2Chart(detections) {
