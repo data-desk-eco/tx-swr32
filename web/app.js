@@ -879,22 +879,29 @@ function renderS2Chart(detections) {
     const firstMonth = new Date(startD);
     firstMonth.setDate(1);
     firstMonth.setMonth(firstMonth.getMonth() + 1);
-    let hasGridlines = false;
+    const minLabelGap = 30; // minimum pixels between labels
+    const startX = margin.left, endX = width - margin.right;
+    let lastLabelX = startX; // track rightmost label position
+    // Start date label at left edge
+    const startLabel = `${MONTHS[startD.getMonth()]} ${startD.getFullYear()}`;
+    svg += `<text x="${startX}" y="${height - 2}" fill="rgba(255,255,255,0.35)" font-size="9" text-anchor="start">${startLabel}</text>`;
+    lastLabelX = startX + startLabel.length * 5; // approximate text width
     for (let d = new Date(firstMonth); d <= endD; d.setMonth(d.getMonth() + 1)) {
-        hasGridlines = true;
         const t = d.getTime();
         const x = margin.left + ((t - minDate) / dateRange) * innerW;
         const isJan = d.getMonth() === 0;
         svg += `<line x1="${x}" y1="${margin.top}" x2="${x}" y2="${height - margin.bottom}" stroke="rgba(255,255,255,${isJan ? 0.15 : 0.06})" stroke-width="1"/>`;
         const label = isJan ? `${MONTHS[0]} ${d.getFullYear()}` : MONTHS[d.getMonth()];
-        svg += `<text x="${x}" y="${height - 2}" fill="rgba(255,255,255,${isJan ? 0.4 : 0.25})" font-size="9" text-anchor="middle">${label}</text>`;
+        const labelW = label.length * 5;
+        if (x - labelW / 2 > lastLabelX + minLabelGap && x + labelW / 2 < endX - minLabelGap) {
+            svg += `<text x="${x}" y="${height - 2}" fill="rgba(255,255,255,${isJan ? 0.4 : 0.25})" font-size="9" text-anchor="middle">${label}</text>`;
+            lastLabelX = x + labelW / 2;
+        }
     }
-    // Always show start/end date labels at edges
-    const startLabel = `${MONTHS[startD.getMonth()]} ${startD.getFullYear()}`;
+    // End date label at right edge (skip if too close to last gridline label)
     const endLabel = `${MONTHS[endD.getMonth()]} ${endD.getFullYear()}`;
-    svg += `<text x="${margin.left}" y="${height - 2}" fill="rgba(255,255,255,0.35)" font-size="9" text-anchor="start">${startLabel}</text>`;
-    if (endLabel !== startLabel || hasGridlines) {
-        svg += `<text x="${width - margin.right}" y="${height - 2}" fill="rgba(255,255,255,0.35)" font-size="9" text-anchor="end">${endLabel}</text>`;
+    if (endLabel !== startLabel && endX - endLabel.length * 5 > lastLabelX + minLabelGap) {
+        svg += `<text x="${endX}" y="${height - 2}" fill="rgba(255,255,255,0.35)" font-size="9" text-anchor="end">${endLabel}</text>`;
     }
 
     // B12 detection dots
