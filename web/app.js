@@ -510,7 +510,6 @@ function removeS2Badge() {
 }
 
 function closeDetail() {
-    cancelEnhance(map);
     removeS2Badge();
     updateFlareUrl(null);
     updateS2Url(null);
@@ -527,7 +526,6 @@ function showFeatureDetail(feature) {
         const cluster = getCluster(feature.properties.id);
         if (cluster) showS2ClusterDetail(cluster);
     } else {
-        cancelEnhance(map);
         if (layer.startsWith('flare')) showFlareDetail(feature);
         else {
             updateFlareUrl(null);
