@@ -27,6 +27,13 @@ async function _init() {
     }));
 }
 
+function bboxDeltas(lat, radiusKm) {
+    return {
+        dLat: radiusKm / 110.54,
+        dLon: radiusKm / (111.32 * Math.cos(lat * Math.PI / 180)),
+    };
+}
+
 let _indexReady = false;
 let _indexPromise = null;
 
@@ -236,8 +243,7 @@ export async function queryOperator(flareId, lat, lon) {
 }
 
 export async function queryOperatorByLocation(lat, lon) {
-    const dLat = 0.375 / 110.54;
-    const dLon = 0.375 / (111.32 * Math.cos(lat * Math.PI / 180));
+    const { dLat, dLon } = bboxDeltas(lat, 0.375);
     const result = await query(`
         WITH permit_ops AS (
             SELECT operator_name, 'permit' AS source,
@@ -326,8 +332,7 @@ export async function queryOperatorByLocation(lat, lon) {
 }
 
 export async function queryNearbyPermits(lat, lon, radiusKm = 0.75) {
-    const dLat = radiusKm / 110.54;
-    const dLon = radiusKm / (111.32 * Math.cos(lat * Math.PI / 180));
+    const { dLat, dLon } = bboxDeltas(lat, radiusKm);
     const result = await query(`
         SELECT name, operator_name, district, county, release_type,
             CAST(earliest_effective AS VARCHAR) AS earliest_effective,
@@ -341,8 +346,7 @@ export async function queryNearbyPermits(lat, lon, radiusKm = 0.75) {
 }
 
 export async function queryNearestPermit(lat, lon, radiusKm = 0.375) {
-    const dLat = radiusKm / 110.54;
-    const dLon = radiusKm / (111.32 * Math.cos(lat * Math.PI / 180));
+    const { dLat, dLon } = bboxDeltas(lat, radiusKm);
     const result = await query(`
         SELECT name, operator_name, district, county, release_type,
             CAST(earliest_effective AS VARCHAR) AS earliest_effective,
@@ -405,27 +409,27 @@ export async function queryWells({ operator, bounds } = {}) {
     };
 }
 
-export async function queryTableRaw(table, { bounds, orderBy, orderDir = 'ASC', limit = 1000 } = {}) {
-    const allowed = new Set(['flares', 'permits', 'plumes', 'wells']);
-    if (!allowed.has(table)) throw new Error(`Unknown table: ${table}`);
+const ALLOWED_TABLES = new Set(['flares', 'permits', 'plumes', 'wells']);
 
+function tableWhere(table, bounds) {
     const latCol = table === 'flares' ? 'lat' : 'latitude';
     const lonCol = table === 'flares' ? 'lon' : 'longitude';
-
     let where = 'WHERE 1=1';
     if (table === 'permits') where += ' AND latitude IS NOT NULL AND longitude IS NOT NULL';
     if (bounds) {
         where += ` AND ${latCol} BETWEEN ${bounds.south} AND ${bounds.north}`;
         where += ` AND ${lonCol} BETWEEN ${bounds.west} AND ${bounds.east}`;
     }
+    return where;
+}
+
+export async function queryTableRaw(table, { bounds, orderBy, orderDir = 'ASC', limit = 1000 } = {}) {
+    if (!ALLOWED_TABLES.has(table)) throw new Error(`Unknown table: ${table}`);
+    const where = tableWhere(table, bounds);
 
     let order = '';
-    if (orderBy) {
-        const dir = orderDir === 'DESC' ? 'DESC' : 'ASC';
-        order = `ORDER BY "${orderBy}" ${dir}`;
-    }
+    if (orderBy) order = `ORDER BY "${orderBy}" ${orderDir === 'DESC' ? 'DESC' : 'ASC'}`;
 
-    // Cast date columns to VARCHAR for display
     const dateSelect = table === 'permits'
         ? `SELECT * REPLACE (
                CAST(earliest_effective AS VARCHAR) AS earliest_effective,
@@ -435,26 +439,12 @@ export async function queryTableRaw(table, { bounds, orderBy, orderDir = 'ASC', 
         ? `SELECT * REPLACE (CAST(date AS VARCHAR) AS date)`
         : 'SELECT *';
 
-    const result = await query(`${dateSelect} FROM '${table}.parquet' ${where} ${order} LIMIT ${limit}`);
-    return rows(result);
+    return rows(await query(`${dateSelect} FROM '${table}.parquet' ${where} ${order} LIMIT ${limit}`));
 }
 
 export async function queryTableCount(table, { bounds } = {}) {
-    const allowed = new Set(['flares', 'permits', 'plumes', 'wells']);
-    if (!allowed.has(table)) throw new Error(`Unknown table: ${table}`);
-
-    const latCol = table === 'flares' ? 'lat' : 'latitude';
-    const lonCol = table === 'flares' ? 'lon' : 'longitude';
-
-    let where = 'WHERE 1=1';
-    if (table === 'permits') where += ' AND latitude IS NOT NULL AND longitude IS NOT NULL';
-    if (bounds) {
-        where += ` AND ${latCol} BETWEEN ${bounds.south} AND ${bounds.north}`;
-        where += ` AND ${lonCol} BETWEEN ${bounds.west} AND ${bounds.east}`;
-    }
-
-    const result = await query(`SELECT COUNT(*) AS cnt FROM '${table}.parquet' ${where}`);
-    const r = rows(result);
+    if (!ALLOWED_TABLES.has(table)) throw new Error(`Unknown table: ${table}`);
+    const r = rows(await query(`SELECT COUNT(*) AS cnt FROM '${table}.parquet' ${tableWhere(table, bounds)}`));
     return r[0]?.cnt || 0;
 }
 

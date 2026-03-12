@@ -30,8 +30,8 @@ Leases are built from OTLS survey polygons containing each lease's
 wells. VNF sites within a lease footprint get allocated to that
 lease, enabling cross-reference with self-reported flaring volumes.
 
-Methane plumes from Carbon Mapper and IMEO are matched to wells and
-VNF sites, classified as flaring, unlit, wellpad, or unmatched.
+Methane plumes from Carbon Mapper and IMEO are spatially overlaid
+for cross-reference with flare sites and wells.
 
 
 Setup
@@ -45,7 +45,7 @@ Optional: EOG credentials in .env for VNF data
 
 Usage
 
-  make db         Full pipeline: schema → load → transform → views
+  make db         Full pipeline: load → rrc → export
   make refresh    Rebuild database from scratch
   make export     Export parquets for web app
   make serve      Dev server on :8080
@@ -66,15 +66,19 @@ Scrapers
 Project Structure
 
   scripts/            Scrapers, parsers, fetchers
-  queries/            SQL pipeline (load → rrc → flaring → export)
+  queries/            SQL pipeline (load → rrc → export)
   data/               Database, CSVs, parquets (gitignored)
   web/                Interactive map (MapLibre GL + DuckDB WASM)
+    app.js            Map, detail panels, shared helpers
+    db.js             DuckDB WASM queries + operator attribution
+    drawer.js         Tabbed data drawer with keyboard nav
+    enhance.js        Sentinel-2 worker lifecycle + caching
     vendor/           Vendored JS deps (maplibre-gl, duckdb-wasm, fonts)
     vendor/s2-flares/ Sentinel-2 detection library (git submodule)
     data/             Exported parquets (flares, permits, wells, plumes, detections)
 
 Zero npm dependencies. MapLibre GL and DuckDB WASM are vendored
-via scripts/vendor.sh. Everything runs client-side.
+via make vendor. Everything runs client-side.
 
 
 Deployment

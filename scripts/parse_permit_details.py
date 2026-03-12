@@ -32,16 +32,6 @@ def build_index(html: str) -> tuple[dict[str, str], etree._Element]:
     return idx, tree
 
 
-def find_value(idx: dict[str, str], label_id: str) -> str:
-    """Get the text of an element by its exact ID."""
-    return idx.get(label_id, "")
-
-
-def find_label_pair(idx: dict[str, str], header_id: str, value_id: str) -> str:
-    """Get value from a known header/value ID pair."""
-    return idx.get(value_id, "")
-
-
 def parse_filing_metadata(idx: dict[str, str], tree: etree._Element, filing_no: str) -> dict:
     """Extract filing metadata using the known label ID patterns."""
     p = "pbviewForm:"

@@ -7,6 +7,12 @@ SET VARIABLE lon_min = -104.5;
 SET VARIABLE lon_max = -100.0;
 SET VARIABLE nm_border_lon = -103.064;  -- TX-NM border longitude (above 32°N)
 
+-- Reusable Permian bbox filter (lat, lon columns vary by table)
+CREATE OR REPLACE MACRO in_permian(lat, lon) AS
+    lat BETWEEN getvariable('lat_min') AND getvariable('lat_max')
+    AND lon BETWEEN getvariable('lon_min') AND getvariable('lon_max')
+    AND (lat <= 32.0 OR lon >= getvariable('nm_border_lon'));
+
 -- VNF flare sites (one row per site, Permian bbox, exclusion flag)
 CREATE OR REPLACE TEMP TABLE sites AS
 SELECT
@@ -27,9 +33,7 @@ FROM (
     FROM raw.vnf WHERE detected AND date >= getvariable('start_date')
     GROUP BY flare_id
 ) f
-WHERE f.lat BETWEEN getvariable('lat_min') AND getvariable('lat_max')
-  AND f.lon BETWEEN getvariable('lon_min') AND getvariable('lon_max')
-  AND (f.lat <= 32.0 OR f.lon >= getvariable('nm_border_lon'));
+WHERE in_permian(f.lat, f.lon);
 
 -- Flares parquet
 COPY (
@@ -106,8 +110,7 @@ COPY (
     WHERE fl.latitude IS NOT NULL AND fl.longitude IS NOT NULL
       AND fl.filing_no NOT IN (SELECT filing_no FROM raw.permits WHERE property_type = 'Gas Plant')
       AND COALESCE(fl.facility_type, '') NOT ILIKE '%gas plant%'
-      AND fl.latitude BETWEEN getvariable('lat_min') AND getvariable('lat_max')
-      AND fl.longitude BETWEEN getvariable('lon_min') AND getvariable('lon_max')
+      AND in_permian(fl.latitude, fl.longitude)
     GROUP BY fl.latitude, fl.longitude, fl.name, fl.county, fl.district,
         fl.release_type, p.operator_name
 ) TO 'web/data/permits.parquet' (FORMAT PARQUET, COMPRESSION ZSTD);
@@ -119,9 +122,7 @@ COPY (
         round(emission_uncertainty, 1) AS emission_uncertainty,
         sector
     FROM raw.plumes
-    WHERE latitude BETWEEN getvariable('lat_min') AND getvariable('lat_max')
-      AND longitude BETWEEN getvariable('lon_min') AND getvariable('lon_max')
-      AND (latitude <= 32.0 OR longitude >= getvariable('nm_border_lon'))
+    WHERE in_permian(latitude, longitude)
 ) TO 'web/data/plumes.parquet' (FORMAT PARQUET, COMPRESSION ZSTD);
 
 -- Wells parquet
@@ -132,6 +133,5 @@ COPY (
     FROM raw.wells w
     LEFT JOIN raw.operators o ON o.operator_number = w.operator_no
     WHERE w.latitude != 0 AND w.longitude != 0
-        AND w.latitude BETWEEN getvariable('lat_min') AND getvariable('lat_max')
-        AND w.longitude BETWEEN getvariable('lon_min') AND getvariable('lon_max')
+        AND in_permian(w.latitude, w.longitude)
 ) TO 'web/data/wells.parquet' (FORMAT PARQUET, COMPRESSION ZSTD);

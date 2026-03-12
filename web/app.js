@@ -13,6 +13,33 @@ const COLORS = {
     well: _css('--color-well'),
 };
 
+// Geo constants
+const LAT_PER_M = 1 / 110540;
+const lonPerM = lat => 1 / (111320 * Math.cos(lat * Math.PI / 180));
+
+// Color ramps
+function b12Color(b) {
+    return b < 0.3 ? '#660800' : b < 0.5 ? '#991100' : b < 0.7 ? '#cc2200' : b < 0.9 ? '#ff4422' : b < 1.2 ? '#ff8844' : '#ffcc44';
+}
+function mwColor(mw) {
+    return mw < 0.3 ? '#660800' : mw < 0.6 ? '#991100' : mw < 0.9 ? '#cc3300' : mw < 1.3 ? '#ff5522' : mw < 2 ? '#ff8844' : mw < 4 ? '#ffcc66' : '#ffeeaa';
+}
+
+function fmtCoords(lat, lon) {
+    return `${Number(lat).toFixed(4)}, ${Number(lon).toFixed(4)}`;
+}
+
+// DOM cache for detail panel
+const $ = id => document.getElementById(id);
+function openDetail(title, lat, lon, bodyHtml) {
+    $('detail-title').textContent = title;
+    $('detail-coords').textContent = fmtCoords(lat, lon);
+    $('intensity-chart').innerHTML = '';
+    removeS2Badge();
+    $('detail-body').innerHTML = bodyHtml;
+    $('detail-panel').classList.remove('hidden');
+}
+
 let layerState = { flares: true, permits: true, plumes: false, wells: false };
 let operatorFilter = '';
 let overlappingFeatures = [];
@@ -60,16 +87,16 @@ const map = new maplibregl.Map({
 
 
 map.on('load', async () => {
-    document.getElementById('stat-sites').textContent = 'Loading...';
+    $('stat-sites').textContent = 'Loading...';
 
     await db.init();
 
     addEmptySources();
     addLayers();
+    bindUI();
     await refreshFlares();
     await loadPermits();
     loadCachedS2();
-    bindUI();
     updateMapCentre();
     handleDeepLink();
     // Stats use queryRenderedFeatures — wait for first idle after data loads
@@ -256,8 +283,8 @@ function flarePixelData(flareGeoJson) {
     const labels = [];
     for (const f of flareGeoJson.features) {
         const [lon, lat] = f.geometry.coordinates;
-        const dLat = HALF_M / 110540;
-        const dLon = HALF_M / (111320 * Math.cos(lat * Math.PI / 180));
+        const dLat = HALF_M * LAT_PER_M;
+        const dLon = HALF_M * lonPerM(lat);
         squares.push({
             type: 'Feature',
             geometry: {
@@ -336,15 +363,15 @@ function loadCachedS2() {
 
 function updateMapCentre() {
     const c = map.getCenter();
-    document.getElementById('map-centre').textContent = `${c.lat.toFixed(3)}, ${c.lng.toFixed(3)}`;
+    $('map-centre').textContent = `${c.lat.toFixed(3)}, ${c.lng.toFixed(3)}`;
 }
 
 function updateStats() {
     const features = map.queryRenderedFeatures({ layers: ['flares-layer'] });
     const sites = features.length;
     const totalMw = features.reduce((s, f) => s + (Number(f.properties.total_rh_mw) || 0), 0);
-    document.getElementById('stat-sites').textContent = sites.toLocaleString();
-    document.getElementById('stat-mw').textContent = sites > 0 ? Math.round(totalMw).toLocaleString() : '--';
+    $('stat-sites').textContent = sites.toLocaleString();
+    $('stat-mw').textContent = sites > 0 ? Math.round(totalMw).toLocaleString() : '--';
 }
 
 const LAYER_MAP = {
@@ -378,8 +405,8 @@ const ALL_CLICK_LAYERS = [
 ];
 
 function bindUI() {
-    document.getElementById('collapse-toggle').addEventListener('click', () => {
-        document.getElementById('left-panel').classList.toggle('collapsed');
+    $('collapse-toggle').addEventListener('click', () => {
+        $('left-panel').classList.toggle('collapsed');
     });
     for (const row of document.querySelectorAll('.toggle-row[data-layer]')) {
         const layer = row.dataset.layer;
@@ -392,7 +419,7 @@ function bindUI() {
     }
 
     let searchTimeout;
-    document.getElementById('operator-search').addEventListener('input', e => {
+    $('operator-search').addEventListener('input', e => {
         clearTimeout(searchTimeout);
         searchTimeout = setTimeout(() => {
             operatorFilter = e.target.value.trim();
@@ -402,16 +429,16 @@ function bindUI() {
         }, 300);
     });
 
-    document.getElementById('detail-close').addEventListener('click', closeDetail);
+    $('detail-close').addEventListener('click', closeDetail);
     document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDetail(); });
 
     // Overlap navigation
-    document.getElementById('overlap-prev').addEventListener('click', () => {
+    $('overlap-prev').addEventListener('click', () => {
         if (overlappingFeatures.length < 2) return;
         overlapIndex = (overlapIndex - 1 + overlappingFeatures.length) % overlappingFeatures.length;
         showFeatureDetail(overlappingFeatures[overlapIndex]);
     });
-    document.getElementById('overlap-next').addEventListener('click', () => {
+    $('overlap-next').addEventListener('click', () => {
         if (overlappingFeatures.length < 2) return;
         overlapIndex = (overlapIndex + 1) % overlappingFeatures.length;
         showFeatureDetail(overlappingFeatures[overlapIndex]);
@@ -557,11 +584,8 @@ function handleDeepLink() {
 }
 
 function removeS2Badge() {
-    const badge = document.getElementById('s2-badge') || document.getElementById('detail-badge');
-    if (badge) {
-        badge.id = 'detail-badge';
-        badge.classList.add('hidden');
-    }
+    const badge = $('s2-badge') || $('detail-badge');
+    if (badge) { badge.id = 'detail-badge'; badge.classList.add('hidden'); }
 }
 
 function closeDetail() {
@@ -569,7 +593,7 @@ function closeDetail() {
     closeS2Pixels();
     updateFlareUrl(null);
     updateS2Url(null);
-    document.getElementById('detail-panel').classList.add('hidden');
+    $('detail-panel').classList.add('hidden');
     overlappingFeatures = [];
     overlapIndex = 0;
     drawer.highlight(null, null);
@@ -730,13 +754,13 @@ function showFeatureDetail(feature) {
     // Update overlap nav for overlapping permits or plumes
     const layer0 = overlappingFeatures[0]?.layer?.id || '';
     const group = layer0.startsWith('permits-') ? 'permits-' : layer0.startsWith('plumes-') ? 'plumes-' : null;
-    const nav = document.getElementById('overlap-nav');
+    const nav = $('overlap-nav');
     if (group) {
         const grouped = overlappingFeatures.filter(f => f.layer.id.startsWith(group));
         if (grouped.length > 1) {
             overlappingFeatures = grouped;
             nav.classList.remove('hidden');
-            document.getElementById('overlap-count').textContent = `${overlapIndex + 1} / ${overlappingFeatures.length}`;
+            $('overlap-count').textContent = `${overlapIndex + 1} / ${overlappingFeatures.length}`;
         } else {
             nav.classList.add('hidden');
         }
@@ -803,40 +827,33 @@ function permitCoverageHtml(info) {
 
 async function showFlareDetail(feature) {
     const p = feature.properties;
-    const panel = document.getElementById('detail-panel');
     const { status, label: statusLabel } = flareStatus(p);
     updateFlareUrl(p.flare_id);
 
-    document.getElementById('detail-title').textContent = `Flare ${p.flare_id}`;
-    document.getElementById('detail-coords').textContent = `${Number(p.lat).toFixed(4)}, ${Number(p.lon).toFixed(4)}`;
-    removeS2Badge();
-    const badge = document.getElementById('detail-badge');
-    if (status) {
-        badge.className = `status-badge ${status}`;
-        badge.textContent = statusLabel;
-        badge.classList.remove('hidden');
-    }
-
-    document.getElementById('intensity-chart').innerHTML = '';
-    document.getElementById('detail-body').innerHTML = `
+    openDetail(`Flare ${p.flare_id}`, p.lat, p.lon, `
         <div class="stats-grid">
             <div class="stat"><div class="stat-big">${num(p.total_rh_mw)}</div><div class="stat-unit">total MW</div></div>
             <div class="stat"><div class="stat-big">${num(p.detection_days)}</div><div class="stat-unit">detection days</div></div>
         </div>
         <div id="vnf-operator-section"></div>
         <div id="vnf-lease-section"></div>
-    `;
-    panel.classList.remove('hidden');
+    `);
+    if (status) {
+        const badge = $('detail-badge');
+        badge.className = `status-badge ${status}`;
+        badge.textContent = statusLabel;
+        badge.classList.remove('hidden');
+    }
 
     // Operator attribution (async — falls back to spatial query if index not ready)
     db.queryOperator(p.flare_id, Number(p.lat), Number(p.lon)).then(op => {
-        const el = document.getElementById('vnf-operator-section');
+        const el = $('vnf-operator-section');
         if (el) el.innerHTML = permitCoverageHtml(operatorInfo(op, p.first_detected, p.last_detected));
     }).catch(() => {});
 
     // Leases (async)
     db.queryLeases(p.flare_id).then(leases => {
-        const el = document.getElementById('vnf-lease-section');
+        const el = $('vnf-lease-section');
         if (!el || leases.length === 0) return;
         const names = [...new Set(leases.map(l => l.lease_name).filter(Boolean))];
         el.innerHTML = '<div class="detail-row lease-row">' + field('Leases',
@@ -848,9 +865,9 @@ async function showFlareDetail(feature) {
         renderSparkline(detections);
 
         // Enhance button — appended after sparkline so it's not overwritten
-        const chartContainer = document.getElementById('intensity-chart');
+        const chartContainer = $('intensity-chart');
         const enhanceBtn = document.createElement('button');
-        enhanceBtn.className = 'enhance-btn';
+        enhanceBtn.className = 'btn-action enhance-btn';
         enhanceBtn.textContent = 'Enhance with Sentinel-2';
         enhanceBtn.addEventListener('click', () => {
             showEnhanceDetail(feature);
@@ -862,11 +879,7 @@ async function showFlareDetail(feature) {
 function showPermitDetail(feature) {
     const p = feature.properties;
     const rate = Number(p.max_release_rate_mcf_day);
-    document.getElementById('intensity-chart').innerHTML = '';
-    removeS2Badge();
-    document.getElementById('detail-title').textContent = p.name || 'Permit location';
-    document.getElementById('detail-coords').textContent = `${Number(p.latitude).toFixed(4)}, ${Number(p.longitude).toFixed(4)}`;
-    document.getElementById('detail-body').innerHTML = `
+    openDetail(p.name || 'Permit location', p.latitude, p.longitude, `
         <div class="stats-grid">
             <div class="stat"><div class="stat-big">${rate > 0 ? rate.toLocaleString() : 'N/A'}</div><div class="stat-unit">max Mcf/day</div></div>
             <div class="stat"><div class="stat-big">${Number(p.n_filings)}</div><div class="stat-unit">filings</div></div>
@@ -882,8 +895,7 @@ function showPermitDetail(feature) {
             ${field('Latest expiration', formatDate(p.latest_expiration))}
         </div>
         ${p.exception_reasons ? `<div class="detail-row">${field('Reasons', p.exception_reasons.split('; ').join(' / '))}</div>` : ''}
-    `;
-    document.getElementById('detail-panel').classList.remove('hidden');
+    `);
 }
 
 function plumeUrl(source, id) {
@@ -894,17 +906,8 @@ function plumeUrl(source, id) {
 
 function showPlumeDetail(feature) {
     const p = feature.properties;
-    document.getElementById('intensity-chart').innerHTML = '';
-    removeS2Badge();
     const url = plumeUrl(p.source, p.plume_id);
-    const titleEl = document.getElementById('detail-title');
-    if (url) {
-        titleEl.innerHTML = `<a href="${url}" target="_blank" rel="noopener" style="color: inherit; text-decoration: none;">${p.plume_id}</a>`;
-    } else {
-        titleEl.textContent = p.plume_id;
-    }
-    document.getElementById('detail-coords').textContent = `${Number(p.latitude).toFixed(4)}, ${Number(p.longitude).toFixed(4)}`;
-    document.getElementById('detail-body').innerHTML = `
+    openDetail(p.plume_id, p.latitude, p.longitude, `
         <div class="stats-grid">
             <div class="stat"><div class="stat-big">${Number(p.emission_rate).toLocaleString()}</div><div class="stat-unit">kg/hr</div></div>
             <div class="stat"><div class="stat-big">&plusmn;${Number(p.emission_uncertainty || 0).toLocaleString()}</div><div class="stat-unit">uncertainty</div></div>
@@ -915,17 +918,13 @@ function showPlumeDetail(feature) {
             ${field('Date', formatDate(p.date))}
             ${field('Sector', p.sector || 'N/A')}
         </div>
-    `;
-    document.getElementById('detail-panel').classList.remove('hidden');
+    `);
+    if (url) $('detail-title').innerHTML = `<a href="${url}" target="_blank" rel="noopener" style="color: inherit; text-decoration: none;">${p.plume_id}</a>`;
 }
 
 function showWellDetail(feature) {
     const p = feature.properties;
-    document.getElementById('intensity-chart').innerHTML = '';
-    removeS2Badge();
-    document.getElementById('detail-title').textContent = `Well ${p.api}`;
-    document.getElementById('detail-coords').textContent = `${Number(p.latitude).toFixed(4)}, ${Number(p.longitude).toFixed(4)}`;
-    document.getElementById('detail-body').innerHTML = `
+    openDetail(`Well ${p.api}`, p.latitude, p.longitude, `
         <div class="detail-row">
             ${field('Operator', p.operator_name || 'N/A')}
             ${field('Type', p.oil_gas_code === 'O' ? 'Oil' : p.oil_gas_code === 'G' ? 'Gas' : p.oil_gas_code || 'N/A')}
@@ -933,55 +932,34 @@ function showWellDetail(feature) {
             ${field('Lease', p.lease_number || 'N/A')}
             ${field('Well #', p.well_number || 'N/A')}
         </div>
-    `;
-    document.getElementById('detail-panel').classList.remove('hidden');
+    `);
 }
 
 
 function showEnhanceDetail(feature) {
     const p = feature.properties;
-    const panel = document.getElementById('detail-panel');
     updateFlareUrl(p.flare_id, 's2');
 
-    document.getElementById('detail-title').textContent = `Sentinel-2 · Flare ${p.flare_id}`;
-    document.getElementById('detail-coords').textContent = `${Number(p.lat).toFixed(4)}, ${Number(p.lon).toFixed(4)}`;
-    removeS2Badge();
-    const badge = document.getElementById('detail-badge');
+    openDetail(`Sentinel-2 · Flare ${p.flare_id}`, p.lat, p.lon, `
+        <div id="s2-stop-section">
+            <button class="btn-action stop-analysis-btn" id="s2-stop-btn">Stop Analysis</button>
+        </div>
+        <div id="s2-cluster-list"></div>
+    `);
+    $('s2-stop-btn').addEventListener('click', () => {
+        cancelEnhance(map);
+        $('s2-stop-section').innerHTML = '';
+    });
+    const badge = $('detail-badge');
     badge.className = 'status-badge s2';
     badge.id = 's2-badge';
     badge.textContent = 'Enhancing';
     badge.classList.remove('hidden');
-
-    document.getElementById('overlap-nav').classList.add('hidden');
-    document.getElementById('intensity-chart').innerHTML = '';
-    document.getElementById('detail-body').innerHTML = `
-        <div id="s2-stop-section"></div>
-        <div id="s2-cluster-list"></div>
-    `;
-    panel.classList.remove('hidden');
-
-    function renderStopButton() {
-        const section = document.getElementById('s2-stop-section');
-        if (!section) return;
-        if (isEnhancing()) {
-            if (!section.querySelector('.stop-analysis-btn')) {
-                const btn = document.createElement('button');
-                btn.className = 'stop-analysis-btn';
-                btn.textContent = 'Stop Analysis';
-                btn.addEventListener('click', () => {
-                    cancelEnhance(map);
-                    btn.remove();
-                });
-                section.appendChild(btn);
-            }
-        } else {
-            section.innerHTML = '';
-        }
-    }
+    $('overlap-nav').classList.add('hidden');
 
     // Wire up live updates before starting (cache path fires synchronously)
     setUpdateCallback((s) => {
-        const s2b = document.getElementById('s2-badge');
+        const s2b = $('s2-badge');
         if (!s2b) return;
 
         if (s.enhancing) {
@@ -993,22 +971,21 @@ function showEnhanceDetail(feature) {
             s2b.textContent = 'Failed';
         }
 
-        renderStopButton();
+        // Hide stop button when done
+        if (!s.enhancing) $('s2-stop-section')?.replaceChildren();
 
         // Update cluster list (live during enhancement and on completion)
         if (s.clusters?.length) {
             if (!s.enhancing) {
                 s2b.textContent = `${s.clusters.length} source${s.clusters.length !== 1 ? 's' : ''}`;
             }
-            const list = document.getElementById('s2-cluster-list');
+            const list = $('s2-cluster-list');
             if (list) {
                 list.className = 'enhance-results';
                 list.innerHTML = s.clusters.map(c => {
-                    const b = c.max_b12;
-                    const color = b < 0.3 ? '#660800' : b < 0.5 ? '#991100' : b < 0.7 ? '#cc2200' : b < 0.9 ? '#ff4422' : b < 1.2 ? '#ff8844' : '#ffcc44';
                     return `<div class="enhance-cluster" data-id="${c.id}">
-                        <span class="cluster-dot" style="background:${color}"></span>
-                        B12 ${b.toFixed(2)} · ${c.detection_count} det · ${c.first_date}${c.first_date !== c.last_date ? ` – ${c.last_date}` : ''}
+                        <span class="cluster-dot" style="background:${b12Color(c.max_b12)}"></span>
+                        B12 ${c.max_b12.toFixed(2)} · ${c.detection_count} det · ${c.first_date}${c.first_date !== c.last_date ? ` – ${c.last_date}` : ''}
                     </div>`;
                 }).join('');
                 list.querySelectorAll('.enhance-cluster').forEach(el => {
@@ -1029,35 +1006,18 @@ function showEnhanceDetail(feature) {
 }
 
 function showS2ClusterDetail(cluster) {
-    removeS2Badge();
     closeS2Pixels();
-    const panel = document.getElementById('detail-panel');
     updateS2Url(cluster.id);
-
-    document.getElementById('detail-title').textContent = `S2 Source ${cluster.id}`;
-    document.getElementById('detail-coords').textContent = `${cluster.lat.toFixed(4)}, ${cluster.lon.toFixed(4)}`;
-
-    const badge = document.getElementById('detail-badge');
-    badge.className = 'status-badge s2';
-    badge.textContent = `${cluster.detection_count} det`;
-    badge.classList.remove('hidden');
-
-    document.getElementById('overlap-nav').classList.add('hidden');
-    document.getElementById('intensity-chart').innerHTML = '';
 
     // Build detection event list (sorted newest first)
     const dets = (cluster.detections || []).slice().sort((a, b) => b.date.localeCompare(a.date));
-    const eventListHtml = dets.map(d => {
-        const b = d.max_b12;
-        const color = b < 0.3 ? '#660800' : b < 0.5 ? '#991100' : b < 0.7 ? '#cc2200' : b < 0.9 ? '#ff4422' : b < 1.2 ? '#ff8844' : '#ffcc44';
-        return `<div class="s2-event-item" data-date="${d.date}">
-            <span class="s2-event-dot" style="background:${color}"></span>
+    const eventListHtml = dets.map(d => `<div class="s2-event-item" data-date="${d.date}">
+            <span class="s2-event-dot" style="background:${b12Color(d.max_b12)}"></span>
             <span class="s2-event-date">${formatDate(d.date)}</span>
-            <span class="s2-event-b12">B12 ${b.toFixed(2)}</span>
-        </div>`;
-    }).join('');
+            <span class="s2-event-b12">B12 ${d.max_b12.toFixed(2)}</span>
+        </div>`).join('');
 
-    document.getElementById('detail-body').innerHTML = `
+    openDetail(`S2 Source ${cluster.id}`, cluster.lat, cluster.lon, `
         <div class="stats-grid">
             <div class="stat"><div class="stat-big">${cluster.max_b12.toFixed(2)}</div><div class="stat-unit">peak B12</div></div>
             <div class="stat"><div class="stat-big">${cluster.avg_b12.toFixed(2)}</div><div class="stat-unit">mean B12</div></div>
@@ -1068,15 +1028,20 @@ function showS2ClusterDetail(cluster) {
         </div>
         <div id="s2-permit-section"></div>
         <div id="s2-event-list" class="s2-event-list">${eventListHtml}</div>
-    `;
+    `);
+    const badge = $('detail-badge');
+    badge.className = 'status-badge s2';
+    badge.textContent = `${cluster.detection_count} det`;
+    badge.classList.remove('hidden');
+    $('overlap-nav').classList.add('hidden');
 
     // Bind click handlers for event items — fetch COG on demand via STAC
     document.querySelectorAll('.s2-event-item').forEach(el => {
         el.addEventListener('click', async () => {
             const date = el.dataset.date;
             // Build tight bbox around cluster location
-            const dLat = 400 / 110540;
-            const dLon = 400 / (111320 * Math.cos(cluster.lat * Math.PI / 180));
+            const dLat = 400 * LAT_PER_M;
+            const dLon = 400 * lonPerM(cluster.lat);
             const bbox = [cluster.lon - dLon, cluster.lat - dLat, cluster.lon + dLon, cluster.lat + dLat];
 
             el.classList.add('loading');
@@ -1107,126 +1072,95 @@ function showS2ClusterDetail(cluster) {
     // Operator attribution — find nearest flare's operator, or do spatial lookup
     const dates = (cluster.detections || []).map(d => d.date).filter(Boolean).sort();
     db.queryOperatorByLocation(cluster.lat, cluster.lon).then(op => {
-        const el = document.getElementById('s2-permit-section');
+        const el = $('s2-permit-section');
         if (el) el.innerHTML = permitCoverageHtml(operatorInfo(op, dates[0] || null, dates[dates.length - 1] || null));
     }).catch(() => {});
 
     panel.classList.remove('hidden');
 }
 
-function renderS2Chart(detections) {
-    const container = document.getElementById('intensity-chart');
+// Shared timeline chart builder
+function renderTimeline(detections, { valueKey, colorFn, scaleFn, gridStyle = 'months' } = {}) {
+    const container = $('intensity-chart');
     if (!detections?.length) { container.innerHTML = ''; return; }
 
-    const margin = { top: 8, right: 8, bottom: 16, left: 8 };
+    const M = { top: 8, right: 8, bottom: 16, left: 8 };
     const width = container.clientWidth || 400, height = 100;
-    const innerW = width - margin.left - margin.right;
-    const innerH = height - margin.top - margin.bottom;
+    const innerW = width - M.left - M.right;
+    const innerH = height - M.top - M.bottom;
 
     const dates = detections.map(d => new Date(d.date).getTime());
-    const minDate = Math.min(...dates);
-    const maxDate = Math.max(...dates);
+    const minDate = Math.min(...dates), maxDate = Math.max(...dates);
     const dateRange = maxDate - minDate || 1;
 
-    const vals = detections.map(d => d.max_b12);
-    const maxVal = Math.max(1.5, ...vals);
-
     let svg = `<svg viewBox="0 0 ${width} ${height}">`;
-    svg += `<line x1="${margin.left}" y1="${height - margin.bottom}" x2="${width - margin.right}" y2="${height - margin.bottom}" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>`;
+    svg += `<line x1="${M.left}" y1="${height - M.bottom}" x2="${width - M.right}" y2="${height - M.bottom}" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>`;
 
-    // Month gridlines with labels
-    const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    const fontSize = 9;
-    const charW = 5;
-    const startD = new Date(minDate), endD = new Date(maxDate);
-    const firstMonth = new Date(startD);
-    firstMonth.setDate(1);
-    firstMonth.setMonth(firstMonth.getMonth() + 1);
-    const minLabelGap = 30;
-    const startX = margin.left, endX = width - margin.right;
-    let lastLabelX = startX; // track rightmost label position
-    // Start date label at left edge
-    const startLabel = `${MONTHS[startD.getMonth()]} ${startD.getFullYear()}`;
-    svg += `<text x="${startX}" y="${height - 2}" fill="rgba(255,255,255,0.35)" font-size="${fontSize}" text-anchor="start">${startLabel}</text>`;
-    lastLabelX = startX + startLabel.length * charW;
-    for (let d = new Date(firstMonth); d <= endD; d.setMonth(d.getMonth() + 1)) {
-        const t = d.getTime();
-        const x = margin.left + ((t - minDate) / dateRange) * innerW;
-        const isJan = d.getMonth() === 0;
-        svg += `<line x1="${x}" y1="${margin.top}" x2="${x}" y2="${height - margin.bottom}" stroke="rgba(255,255,255,${isJan ? 0.15 : 0.06})" stroke-width="1"/>`;
-        const label = isJan ? `${MONTHS[0]} ${d.getFullYear()}` : MONTHS[d.getMonth()];
-        const labelW = label.length * charW;
-        if (x - labelW / 2 > lastLabelX + minLabelGap && x + labelW / 2 < endX - minLabelGap) {
-            svg += `<text x="${x}" y="${height - 2}" fill="rgba(255,255,255,${isJan ? 0.4 : 0.25})" font-size="${fontSize}" text-anchor="middle">${label}</text>`;
-            lastLabelX = x + labelW / 2;
+    const xOf = t => M.left + ((t - minDate) / dateRange) * innerW;
+
+    if (gridStyle === 'months') {
+        // Month gridlines with labels
+        const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        const charW = 5, minGap = 30;
+        const startD = new Date(minDate), endD = new Date(maxDate);
+        const startX = M.left, endX = width - M.right;
+        const startLabel = `${MONTHS[startD.getMonth()]} ${startD.getFullYear()}`;
+        svg += `<text x="${startX}" y="${height - 2}" fill="rgba(255,255,255,0.35)" font-size="9" text-anchor="start">${startLabel}</text>`;
+        let lastLabelX = startX + startLabel.length * charW;
+        const firstMonth = new Date(startD);
+        firstMonth.setDate(1);
+        firstMonth.setMonth(firstMonth.getMonth() + 1);
+        for (let d = new Date(firstMonth); d <= endD; d.setMonth(d.getMonth() + 1)) {
+            const x = xOf(d.getTime());
+            const isJan = d.getMonth() === 0;
+            svg += `<line x1="${x}" y1="${M.top}" x2="${x}" y2="${height - M.bottom}" stroke="rgba(255,255,255,${isJan ? 0.15 : 0.06})" stroke-width="1"/>`;
+            const label = isJan ? `${MONTHS[0]} ${d.getFullYear()}` : MONTHS[d.getMonth()];
+            const labelW = label.length * charW;
+            if (x - labelW / 2 > lastLabelX + minGap && x + labelW / 2 < endX - minGap) {
+                svg += `<text x="${x}" y="${height - 2}" fill="rgba(255,255,255,${isJan ? 0.4 : 0.25})" font-size="9" text-anchor="middle">${label}</text>`;
+                lastLabelX = x + labelW / 2;
+            }
+        }
+        const endLabel = `${MONTHS[endD.getMonth()]} ${endD.getFullYear()}`;
+        if (endLabel !== startLabel && endX - endLabel.length * charW > lastLabelX + minGap)
+            svg += `<text x="${endX}" y="${height - 2}" fill="rgba(255,255,255,0.35)" font-size="9" text-anchor="end">${endLabel}</text>`;
+    } else {
+        // Year-only gridlines
+        const firstYear = new Date(minDate).getFullYear(), lastYear = new Date(maxDate).getFullYear();
+        for (let y = firstYear + 1; y <= lastYear; y++) {
+            const x = xOf(new Date(y, 0, 1).getTime());
+            svg += `<line x1="${x}" y1="${M.top}" x2="${x}" y2="${height - M.bottom}" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>`;
+            svg += `<text x="${x}" y="${height - 2}" fill="rgba(255,255,255,0.3)" font-size="10" text-anchor="middle">${y}</text>`;
         }
     }
-    // End date label at right edge (skip if too close to last gridline label)
-    const endLabel = `${MONTHS[endD.getMonth()]} ${endD.getFullYear()}`;
-    if (endLabel !== startLabel && endX - endLabel.length * charW > lastLabelX + minLabelGap) {
-        svg += `<text x="${endX}" y="${height - 2}" fill="rgba(255,255,255,0.35)" font-size="${fontSize}" text-anchor="end">${endLabel}</text>`;
-    }
 
-    // B12 detection dots
     detections.forEach(det => {
-        const date = new Date(det.date).getTime();
-        const x = margin.left + ((date - minDate) / dateRange) * innerW;
-        const t = Math.min(1, det.max_b12 / maxVal);
-        const y = margin.top + innerH - t * innerH;
-        const b = det.max_b12;
-        const color = b < 0.3 ? '#660800' : b < 0.5 ? '#991100' : b < 0.7 ? '#cc2200' : b < 0.9 ? '#ff4422' : b < 1.2 ? '#ff8844' : '#ffcc44';
-        svg += `<circle class="chart-dot" cx="${x}" cy="${y}" r="2" fill="${color}" opacity="0.8"/>`;
+        const x = xOf(new Date(det.date).getTime());
+        const t = scaleFn(det);
+        const y = M.top + innerH - t * innerH;
+        svg += `<circle class="chart-dot" cx="${x}" cy="${y}" r="2" fill="${colorFn(det[valueKey])}" opacity="0.8"/>`;
     });
 
     svg += '</svg>';
     container.innerHTML = svg;
 }
 
+function renderS2Chart(detections) {
+    const maxVal = Math.max(1.5, ...detections.map(d => d.max_b12));
+    renderTimeline(detections, {
+        valueKey: 'max_b12', colorFn: b12Color, gridStyle: 'months',
+        scaleFn: d => Math.min(1, d.max_b12 / maxVal),
+    });
+}
+
 function renderSparkline(detections) {
-    const container = document.getElementById('intensity-chart');
-    if (!detections?.length) { container.innerHTML = ''; return; }
-
-    const margin = { top: 8, right: 8, bottom: 16, left: 8 };
-    const width = container.clientWidth || 400, height = 100;
-    const innerW = width - margin.left - margin.right;
-    const innerH = height - margin.top - margin.bottom;
-
-    const dates = detections.map(d => new Date(d.date).getTime());
-    const minDate = Math.min(...dates);
-    const maxDate = Math.max(...dates);
-    const dateRange = maxDate - minDate || 1;
-
-    // Log scale for rh_mw (MW)
     const vals = detections.map(d => d.rh_mw).filter(v => v > 0);
     const lo = 0.1, hi = Math.max(10, ...vals);
-
-    let svg = `<svg viewBox="0 0 ${width} ${height}">`;
-    svg += `<line x1="${margin.left}" y1="${height - margin.bottom}" x2="${width - margin.right}" y2="${height - margin.bottom}" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>`;
-
-    // Year gridlines
-    const firstYear = new Date(minDate).getFullYear();
-    const lastYear = new Date(maxDate).getFullYear();
-    for (let y = firstYear + 1; y <= lastYear; y++) {
-        const jan1 = new Date(y, 0, 1).getTime();
-        const x = margin.left + ((jan1 - minDate) / dateRange) * innerW;
-        svg += `<line x1="${x}" y1="${margin.top}" x2="${x}" y2="${height - margin.bottom}" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>`;
-        svg += `<text x="${x}" y="${height - 2}" fill="rgba(255,255,255,0.3)" font-size="10" text-anchor="middle">${y}</text>`;
-    }
-
-    // Detection dots — small for dense data
-    detections.forEach(det => {
-        const date = new Date(det.date).getTime();
-        const x = margin.left + ((date - minDate) / dateRange) * innerW;
-        const val = det.rh_mw || 0;
-        const t = val > 0 ? Math.max(0, Math.min(1, (Math.log(Math.max(lo, val)) - Math.log(lo)) / (Math.log(hi) - Math.log(lo)))) : 0;
-        const y = margin.top + innerH - t * innerH;
-        const mw = det.rh_mw || 0;
-        const color = mw < 0.3 ? '#660800' : mw < 0.6 ? '#991100' : mw < 0.9 ? '#cc3300' : mw < 1.3 ? '#ff5522' : mw < 2 ? '#ff8844' : mw < 4 ? '#ffcc66' : '#ffeeaa';
-        svg += `<circle class="chart-dot" cx="${x}" cy="${y}" r="2" fill="${color}" opacity="0.8"/>`;
+    const logLo = Math.log(lo), logRange = Math.log(hi) - logLo;
+    renderTimeline(detections, {
+        valueKey: 'rh_mw', colorFn: mwColor, gridStyle: 'years',
+        scaleFn: d => d.rh_mw > 0 ? Math.max(0, Math.min(1, (Math.log(Math.max(lo, d.rh_mw)) - logLo) / logRange)) : 0,
     });
-
-    svg += '</svg>';
-    container.innerHTML = svg;
 }
 
 function num(v) {
