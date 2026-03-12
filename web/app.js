@@ -1,4 +1,4 @@
-import * as db from './db.js?v=3';
+import * as db from './db.js?v=4';
 import { enhance, cancelEnhance, setUpdateCallback, getState, loadAllCached, getCluster, isEnhancing } from './enhance.js?v=3';
 
 const COLORS = {
@@ -69,6 +69,9 @@ map.on('load', async () => {
     handleDeepLink();
     // Stats use queryRenderedFeatures — wait for first idle after data loads
     map.once('idle', updateStats);
+
+    // Build operator index in background (enables search + detail attribution)
+    db.buildOperatorIndex();
 });
 
 function addEmptySources() {
@@ -274,7 +277,9 @@ async function loadPlumes() {
 
 async function loadWells() {
     if (!layerState.wells) return;
-    const data = await db.queryWells({ operator: operatorFilter || undefined });
+    const b = map.getBounds();
+    const bounds = { south: b.getSouth(), north: b.getNorth(), west: b.getWest(), east: b.getEast() };
+    const data = await db.queryWells({ operator: operatorFilter || undefined, bounds });
     map.getSource('wells').setData(data);
 }
 
@@ -446,7 +451,10 @@ function bindUI() {
     }
 
     map.on('move', updateMapCentre);
-    map.on('moveend', updateStats);
+    map.on('moveend', () => {
+        updateStats();
+        loadWells();
+    });
 }
 
 function updateFlareUrl(flareId, mode) {
@@ -558,49 +566,25 @@ function flareStatus(p) {
     return { status: null, label: null };
 }
 
-function permitInfoFromVnf(p) {
-    return {
-        operator: p.operator_name,
-        confidence: p.confidence ? p.confidence.charAt(0).toUpperCase() + p.confidence.slice(1) : null,
-        permitName: [...new Set([p.site_name, p.permit_name].filter(Boolean))].join(', ') || null,
-        distanceKm: p.nearest_permit_km != null ? Number(p.nearest_permit_km) : null,
-        firstDetected: p.first_detected,
-        lastDetected: p.last_detected,
-    };
-}
-
-function permitInfoFromS2(detections, nearbyPermits) {
-    if (!detections.length) return null;
-
-    // Find the nearest permit to any detection
-    let bestPermit = null, bestDist = Infinity;
-    for (const d of detections) {
-        const np = nearestPermit(d.lat, d.lon, nearbyPermits);
-        if (np && np.distance_km < bestDist) {
-            bestDist = np.distance_km;
-            bestPermit = np;
-        }
-    }
-
-    const dates = detections.map(d => d.date).filter(Boolean).sort();
-    const firstDetected = dates[0] || null;
-    const lastDetected = dates[dates.length - 1] || null;
-
+function operatorInfo(op, firstDetected, lastDetected) {
+    if (!op) return { operator: null, confidence: null, permitName: null, distanceKm: null, firstDetected, lastDetected };
+    const confidence = op.confidence ? op.confidence.charAt(0).toUpperCase() + op.confidence.slice(1) : null;
+    const distanceKm = op.nearest_permit_km != null ? Number(op.nearest_permit_km) : null;
     let covered = null;
-    if (bestPermit && bestDist <= 0.375) {
-        covered = firstDetected && bestPermit.earliest_effective <= firstDetected
-            && (!bestPermit.latest_expiration || bestPermit.latest_expiration >= lastDetected);
+    if (distanceKm != null && distanceKm <= 0.375) {
+        covered = firstDetected && op.earliest_effective <= firstDetected
+            && (!op.latest_expiration || op.latest_expiration >= lastDetected);
     }
-
     return {
-        operator: bestPermit?.operator_name || null,
-        permitName: bestPermit && bestDist <= 0.375 ? (bestPermit.name || 'Unnamed') : null,
-        distanceKm: bestPermit && bestDist <= 0.375 ? bestDist : null,
+        operator: op.operator_name,
+        confidence,
+        permitName: op.permit_name || null,
+        distanceKm,
         firstDetected,
         lastDetected,
         covered,
-        permitDates: bestPermit && bestDist <= 0.375
-            ? (bestPermit.earliest_effective || '?') + ' → ' + (bestPermit.latest_expiration || 'open')
+        permitDates: distanceKm != null && distanceKm <= 0.375
+            ? (op.earliest_effective || '?') + ' → ' + (op.latest_expiration || 'open')
             : null,
     };
 }
@@ -644,29 +628,31 @@ async function showFlareDetail(feature) {
         badge.classList.remove('hidden');
     }
 
-    let leaseHtml = '';
-    try {
-        const leases = await db.queryLeases(p.flare_id);
-        if (leases.length > 0) {
-            const names = [...new Set(leases.map(l => l.lease_name).filter(Boolean))];
-            if (names.length > 0) {
-                leaseHtml = '<div class="detail-row lease-row">' + field('Leases', names.join(', ')) + '</div>';
-            } else {
-                leaseHtml = '<div class="detail-row lease-row">' + field('Leases', `${leases.length} matched (unnamed)`) + '</div>';
-            }
-        }
-    } catch { /* lease query failed, skip */ }
-
     document.getElementById('intensity-chart').innerHTML = '';
     document.getElementById('detail-body').innerHTML = `
         <div class="stats-grid">
             <div class="stat"><div class="stat-big">${num(p.total_rh_mw)}</div><div class="stat-unit">total MW</div></div>
             <div class="stat"><div class="stat-big">${num(p.detection_days)}</div><div class="stat-unit">detection days</div></div>
         </div>
-        ${permitCoverageHtml(permitInfoFromVnf(p))}
-        ${leaseHtml}
+        <div id="vnf-operator-section"></div>
+        <div id="vnf-lease-section"></div>
     `;
     panel.classList.remove('hidden');
+
+    // Operator attribution (async — falls back to spatial query if index not ready)
+    db.queryOperator(p.flare_id, Number(p.lat), Number(p.lon)).then(op => {
+        const el = document.getElementById('vnf-operator-section');
+        if (el) el.innerHTML = permitCoverageHtml(operatorInfo(op, p.first_detected, p.last_detected));
+    }).catch(() => {});
+
+    // Leases (async)
+    db.queryLeases(p.flare_id).then(leases => {
+        const el = document.getElementById('vnf-lease-section');
+        if (!el || leases.length === 0) return;
+        const names = [...new Set(leases.map(l => l.lease_name).filter(Boolean))];
+        el.innerHTML = '<div class="detail-row lease-row">' + field('Leases',
+            names.length > 0 ? names.join(', ') : `${leases.length} matched (unnamed)`) + '</div>';
+    }).catch(() => {});
 
     // Load sparkline async, then append enhance button after chart renders
     db.queryDetections(p.flare_id).then(detections => {
@@ -762,19 +748,6 @@ function showWellDetail(feature) {
     document.getElementById('detail-panel').classList.remove('hidden');
 }
 
-function distKm(lat1, lon1, lat2, lon2) {
-    const cosLat = Math.cos(lat1 * Math.PI / 180);
-    return 111.32 * Math.sqrt((lat2 - lat1) ** 2 * (110.54 / 111.32) ** 2 + ((lon2 - lon1) * cosLat) ** 2);
-}
-
-function nearestPermit(lat, lon, permits) {
-    let best = null, bestDist = Infinity;
-    for (const p of permits) {
-        const d = distKm(lat, lon, p.latitude, p.longitude);
-        if (d < bestDist) { bestDist = d; best = p; }
-    }
-    return best ? { ...best, distance_km: bestDist } : null;
-}
 
 function showEnhanceDetail(feature) {
     const p = feature.properties;
@@ -896,11 +869,11 @@ function showS2ClusterDetail(cluster) {
         renderS2Chart(cluster.detections);
     }
 
-    // Permit coverage
-    db.queryNearbyPermits(cluster.lat, cluster.lon).then(permits => {
-        const info = permitInfoFromS2(cluster.detections || [], permits);
+    // Operator attribution — find nearest flare's operator, or do spatial lookup
+    const dates = (cluster.detections || []).map(d => d.date).filter(Boolean).sort();
+    db.queryOperatorByLocation(cluster.lat, cluster.lon).then(op => {
         const el = document.getElementById('s2-permit-section');
-        if (el) el.innerHTML = permitCoverageHtml(info);
+        if (el) el.innerHTML = permitCoverageHtml(operatorInfo(op, dates[0] || null, dates[dates.length - 1] || null));
     }).catch(() => {});
 
     panel.classList.remove('hidden');

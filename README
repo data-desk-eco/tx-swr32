@@ -51,7 +51,7 @@ Usage
   make serve      Dev server on :8080
   make help       All targets
 
-  duckdb data/dark_flaring.duckdb   Interactive queries
+  duckdb data/data.duckdb   Interactive queries
 
 
 Scrapers

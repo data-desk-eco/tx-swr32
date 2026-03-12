@@ -27,6 +27,113 @@ async function _init() {
     }));
 }
 
+let _indexReady = false;
+let _indexPromise = null;
+
+export function isOperatorIndexReady() { return _indexReady; }
+
+export async function buildOperatorIndex() {
+    if (_indexPromise) return _indexPromise;
+    _indexPromise = _buildOperatorIndex();
+    return _indexPromise;
+}
+
+async function _buildOperatorIndex() {
+    // Pre-compute operator attribution for all flares (permits+wells scoring)
+    await conn.query(`
+        CREATE TABLE IF NOT EXISTS flare_operators AS
+        WITH permit_ops AS (
+            SELECT f.flare_id, p.operator_name, 'permit' AS source,
+                COUNT(DISTINCT p.name) AS n_records,
+                MIN(111.32 * sqrt(
+                    power((p.latitude - f.lat) * cos(radians(f.lat)), 2) +
+                    power(p.longitude - f.lon, 2)
+                )) AS min_distance_km,
+                FIRST(p.name ORDER BY 111.32 * sqrt(
+                    power((p.latitude - f.lat) * cos(radians(f.lat)), 2) +
+                    power(p.longitude - f.lon, 2)
+                )) AS nearest_permit_name,
+                MIN(CAST(p.earliest_effective AS VARCHAR)) AS earliest_effective,
+                MAX(CAST(p.latest_expiration AS VARCHAR)) AS latest_expiration
+            FROM 'flares.parquet' f
+            JOIN 'permits.parquet' p
+              ON p.latitude BETWEEN f.lat - 0.0034 AND f.lat + 0.0034
+             AND p.longitude BETWEEN f.lon - (0.0034 / cos(radians(f.lat)))
+                                 AND f.lon + (0.0034 / cos(radians(f.lat)))
+            WHERE 111.32 * sqrt(
+                power((p.latitude - f.lat) * cos(radians(f.lat)), 2) +
+                power(p.longitude - f.lon, 2)
+            ) <= 0.375
+            GROUP BY 1, 2
+        ),
+        well_ops AS (
+            SELECT f.flare_id, w.operator_name, 'well' AS source,
+                COUNT(DISTINCT w.api) AS n_records,
+                MIN(111.32 * sqrt(
+                    power((w.latitude - f.lat) * cos(radians(f.lat)), 2) +
+                    power(w.longitude - f.lon, 2)
+                )) AS min_distance_km
+            FROM 'flares.parquet' f
+            JOIN 'wells.parquet' w
+              ON w.latitude BETWEEN f.lat - 0.0034 AND f.lat + 0.0034
+             AND w.longitude BETWEEN f.lon - (0.0034 / cos(radians(f.lat)))
+                                 AND f.lon + (0.0034 / cos(radians(f.lat)))
+            WHERE w.operator_name IS NOT NULL
+              AND 111.32 * sqrt(
+                power((w.latitude - f.lat) * cos(radians(f.lat)), 2) +
+                power(w.longitude - f.lon, 2)
+            ) <= 0.375
+            GROUP BY 1, 2
+        ),
+        all_ops AS (
+            SELECT flare_id, operator_name, SUM(n_records) AS total_records,
+                MIN(min_distance_km) AS min_distance_km,
+                bool_or(source = 'permit') AS has_permit
+            FROM (
+                SELECT flare_id, operator_name, source, n_records, min_distance_km FROM permit_ops
+                UNION ALL
+                SELECT flare_id, operator_name, source, n_records, min_distance_km FROM well_ops
+            ) combined
+            GROUP BY 1, 2
+        ),
+        ranked AS (
+            SELECT *, ROW_NUMBER() OVER (
+                PARTITION BY flare_id
+                ORDER BY has_permit DESC, total_records DESC, min_distance_km
+            ) AS rn
+            FROM all_ops
+        ),
+        best AS (SELECT * FROM ranked WHERE rn = 1),
+        agg AS (
+            SELECT b.flare_id,
+                COUNT(DISTINCT a.operator_name) AS n_operators,
+                SUM(CASE WHEN a.operator_name = b.operator_name THEN a.total_records ELSE 0 END) * 1.0
+                  / SUM(a.total_records) AS own_share
+            FROM best b JOIN all_ops a USING (flare_id)
+            GROUP BY 1
+        ),
+        nearest_permit AS (
+            SELECT DISTINCT ON (flare_id) flare_id,
+                nearest_permit_name AS permit_name,
+                min_distance_km AS nearest_permit_km,
+                earliest_effective, latest_expiration
+            FROM permit_ops
+            ORDER BY flare_id, min_distance_km
+        )
+        SELECT b.flare_id, b.operator_name,
+            CASE WHEN a.n_operators = 1 THEN 'sole'
+                 WHEN a.own_share > 0.5 THEN 'majority'
+                 ELSE 'contested'
+            END AS confidence,
+            np.permit_name, np.nearest_permit_km,
+            np.earliest_effective, np.latest_expiration
+        FROM best b
+        LEFT JOIN agg a USING (flare_id)
+        LEFT JOIN nearest_permit np USING (flare_id)
+    `);
+    _indexReady = true;
+}
+
 async function query(sql) {
     if (!conn) throw new Error('DB not initialized');
     return conn.query(sql);
@@ -47,15 +154,17 @@ function rows(result) {
 }
 
 export async function queryFlares({ operator } = {}) {
-    let where = 'WHERE 1=1';
-    if (operator) where += ` AND lower(operator_name) LIKE '%${operator.toLowerCase().replace(/'/g, "''")}%'`;
-
+    let where = '';
+    if (operator) {
+        await buildOperatorIndex();
+        const op = operator.toLowerCase().replace(/'/g, "''");
+        where = `JOIN flare_operators fo USING (flare_id) WHERE lower(fo.operator_name) LIKE '%${op}%'`;
+    }
     const result = await query(`
-        SELECT flare_id, lat, lon, detection_days,
-            total_rh_mw, avg_rh_mw, operator_name, confidence,
-            nearest_permit_km, permit_name, site_name,
-            first_detected, last_detected, near_excluded_facility
-        FROM 'flares.parquet' ${where}
+        SELECT f.flare_id, f.lat, f.lon, f.detection_days,
+            f.total_rh_mw, f.avg_rh_mw,
+            f.first_detected, f.last_detected, f.near_excluded_facility
+        FROM 'flares.parquet' f ${where}
     `);
     const data = rows(result);
     return {
@@ -111,6 +220,111 @@ export async function queryPermits({ operator } = {}) {
     };
 }
 
+export async function queryOperator(flareId, lat, lon) {
+    if (_indexReady) {
+        const result = await query(`
+            SELECT operator_name, confidence, permit_name,
+                nearest_permit_km, earliest_effective, latest_expiration
+            FROM flare_operators
+            WHERE flare_id = ${Number(flareId)}
+        `);
+        const r = rows(result);
+        return r.length > 0 ? r[0] : null;
+    }
+    // Index still building — fast single-point lookup
+    return queryOperatorByLocation(lat, lon);
+}
+
+export async function queryOperatorByLocation(lat, lon) {
+    const dLat = 0.375 / 110.54;
+    const dLon = 0.375 / (111.32 * Math.cos(lat * Math.PI / 180));
+    const result = await query(`
+        WITH permit_ops AS (
+            SELECT operator_name, 'permit' AS source,
+                COUNT(DISTINCT name) AS n_records,
+                MIN(111.32 * sqrt(
+                    power((latitude - ${lat}) * cos(radians(${lat})), 2) +
+                    power(longitude - (${lon}), 2)
+                )) AS min_distance_km,
+                FIRST(name ORDER BY 111.32 * sqrt(
+                    power((latitude - ${lat}) * cos(radians(${lat})), 2) +
+                    power(longitude - (${lon}), 2)
+                )) AS nearest_permit_name,
+                MIN(CAST(earliest_effective AS VARCHAR)) AS earliest_effective,
+                MAX(CAST(latest_expiration AS VARCHAR)) AS latest_expiration
+            FROM 'permits.parquet'
+            WHERE latitude BETWEEN ${lat - dLat} AND ${lat + dLat}
+              AND longitude BETWEEN ${lon - dLon} AND ${lon + dLon}
+              AND 111.32 * sqrt(
+                  power((latitude - ${lat}) * cos(radians(${lat})), 2) +
+                  power(longitude - (${lon}), 2)
+              ) <= 0.375
+            GROUP BY operator_name
+        ),
+        well_ops AS (
+            SELECT operator_name, 'well' AS source,
+                COUNT(DISTINCT api) AS n_records,
+                MIN(111.32 * sqrt(
+                    power((latitude - ${lat}) * cos(radians(${lat})), 2) +
+                    power(longitude - (${lon}), 2)
+                )) AS min_distance_km
+            FROM 'wells.parquet'
+            WHERE latitude BETWEEN ${lat - dLat} AND ${lat + dLat}
+              AND longitude BETWEEN ${lon - dLon} AND ${lon + dLon}
+              AND operator_name IS NOT NULL
+              AND 111.32 * sqrt(
+                  power((latitude - ${lat}) * cos(radians(${lat})), 2) +
+                  power(longitude - (${lon}), 2)
+              ) <= 0.375
+            GROUP BY operator_name
+        ),
+        all_ops AS (
+            SELECT operator_name, SUM(n_records) AS total_records,
+                MIN(min_distance_km) AS min_distance_km,
+                bool_or(source = 'permit') AS has_permit
+            FROM (
+                SELECT operator_name, source, n_records, min_distance_km FROM permit_ops
+                UNION ALL
+                SELECT operator_name, source, n_records, min_distance_km FROM well_ops
+            ) combined
+            GROUP BY operator_name
+        ),
+        ranked AS (
+            SELECT *, ROW_NUMBER() OVER (
+                ORDER BY has_permit DESC, total_records DESC, min_distance_km
+            ) AS rn
+            FROM all_ops
+        ),
+        best AS (SELECT * FROM ranked WHERE rn = 1),
+        agg AS (
+            SELECT COUNT(DISTINCT a.operator_name) AS n_operators,
+                SUM(CASE WHEN a.operator_name = b.operator_name THEN a.total_records ELSE 0 END) * 1.0
+                  / SUM(a.total_records) AS own_share
+            FROM best b, all_ops a
+        ),
+        nearest_permit AS (
+            SELECT nearest_permit_name, min_distance_km AS nearest_permit_km,
+                earliest_effective, latest_expiration
+            FROM permit_ops
+            ORDER BY min_distance_km
+            LIMIT 1
+        )
+        SELECT b.operator_name,
+            CASE WHEN a.n_operators = 1 THEN 'sole'
+                 WHEN a.own_share > 0.5 THEN 'majority'
+                 ELSE 'contested'
+            END AS confidence,
+            np.nearest_permit_name AS permit_name,
+            np.nearest_permit_km,
+            np.earliest_effective,
+            np.latest_expiration
+        FROM best b, agg a
+        LEFT JOIN nearest_permit np ON true
+    `);
+    const r = rows(result);
+    return r.length > 0 ? r[0] : null;
+}
+
 export async function queryNearbyPermits(lat, lon, radiusKm = 0.75) {
     const dLat = radiusKm / 110.54;
     const dLon = radiusKm / (111.32 * Math.cos(lat * Math.PI / 180));
@@ -153,8 +367,7 @@ export async function queryPlumes() {
     const result = await query(`
         SELECT plume_id, latitude, longitude, source, satellite,
             CAST(date AS VARCHAR) AS date,
-            emission_rate, emission_uncertainty, sector, classification,
-            operator_name, vnf_flare_id, vnf_distance_km
+            emission_rate, emission_uncertainty, sector
         FROM 'plumes.parquet'
     `);
     const data = rows(result);
@@ -168,8 +381,12 @@ export async function queryPlumes() {
     };
 }
 
-export async function queryWells({ operator } = {}) {
+export async function queryWells({ operator, bounds } = {}) {
     let where = 'WHERE 1=1';
+    if (bounds) {
+        where += ` AND latitude BETWEEN ${bounds.south} AND ${bounds.north}`;
+        where += ` AND longitude BETWEEN ${bounds.west} AND ${bounds.east}`;
+    }
     if (operator) where += ` AND lower(operator_name) LIKE '%${operator.toLowerCase().replace(/'/g, "''")}%'`;
     const result = await query(`
         SELECT api, oil_gas_code, lease_district, lease_number, well_number,

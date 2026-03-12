@@ -2,7 +2,6 @@ INSTALL spatial; LOAD spatial;
 
 CREATE SCHEMA IF NOT EXISTS raw;
 CREATE SCHEMA IF NOT EXISTS rrc;
-CREATE SCHEMA IF NOT EXISTS flaring;
 
 -- SWR 32 permits (parse "Oil Lease-08-43066" → type, district, number)
 CREATE OR REPLACE TABLE raw.permits AS

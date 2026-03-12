@@ -47,24 +47,23 @@ data/vnf_profiles/.done:
 # --- database ---
 
 refresh:
-	rm -f data/dark_flaring.duckdb
+	rm -f data/data.duckdb
 	$(MAKE) db
 
-db: data/dark_flaring.duckdb
+db: data/data.duckdb
 
-data/dark_flaring.duckdb: data/filings.csv data/wells.csv data/operators.csv data/vnf_profiles/.done data/flare_locations.csv data/permit_details.csv data/permit_properties.csv data/excluded_facilities.csv data/plumes_cm.csv data/plumes_imeo.csv data/pdq/.done data/survALLp.shp queries/*.sql
+data/data.duckdb: data/filings.csv data/wells.csv data/operators.csv data/vnf_profiles/.done data/flare_locations.csv data/permit_details.csv data/permit_properties.csv data/excluded_facilities.csv data/plumes_cm.csv data/plumes_imeo.csv data/pdq/.done data/survALLp.shp queries/*.sql
 	@rm -f $@
 	duckdb $@ < queries/load.sql
 	duckdb $@ < queries/rrc.sql
-	duckdb $@ < queries/flaring.sql
 	duckdb $@ < queries/export.sql
 	@echo "Database ready: $@"
 
 # --- web app ---
 
-export: data/dark_flaring.duckdb queries/export.sql
+export: data/data.duckdb queries/export.sql
 	mkdir -p web/data
-	duckdb data/dark_flaring.duckdb < queries/export.sql
+	duckdb data/data.duckdb < queries/export.sql
 
 vendor:
 	scripts/vendor.sh
@@ -73,12 +72,12 @@ serve:
 	python3 -m http.server 8080 -d web
 
 clean:
-	rm -f data/dark_flaring.duckdb data/wells.csv data/operators.csv data/.rrc_downloaded data/plumes_cm.csv data/plumes_imeo.csv
+	rm -f data/data.duckdb data/wells.csv data/operators.csv data/.rrc_downloaded data/plumes_cm.csv data/plumes_imeo.csv
 
 help:
 	@echo "gaslight — dark flaring analysis for the Permian Basin"
 	@echo ""
-	@echo "  make db              Full pipeline (load → rrc → flaring → export)"
+	@echo "  make db              Full pipeline (load → rrc → export)"
 	@echo "  make refresh         Rebuild database from scratch"
 	@echo "  make export          Re-export parquets for web app"
 	@echo "  make vendor          Download vendored JS dependencies"
