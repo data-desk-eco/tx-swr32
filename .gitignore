@@ -6,3 +6,4 @@ __pycache__/
 web/vendor/
 node_modules/
 .venv/
+.superpowers/

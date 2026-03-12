@@ -1,11 +1,16 @@
 import * as db from './db.js?v=4';
 import { enhance, cancelEnhance, setUpdateCallback, getState, loadAllCached, getCluster, isEnhancing } from './enhance.js?v=3';
+import * as drawer from './drawer.js?v=1';
+import { searchSTAC } from './vendor/s2-flares/stac.js';
+import { openCOG } from './vendor/s2-flares/cog.js';
+import { wgs84ToUtm, utmToWgs84, utmParams } from './vendor/s2-flares/geo.js';
 
+const _css = k => getComputedStyle(document.documentElement).getPropertyValue(k).trim();
 const COLORS = {
-    flare: '#ffaa44',
-    permit: '#00ccff',
-    plume: '#ff44ff',
-    well: 'rgba(220,220,230,0.8)'
+    flare: _css('--color-flare'),
+    permit: _css('--color-permit'),
+    plume: _css('--color-plume'),
+    well: _css('--color-well'),
 };
 
 let layerState = { flares: true, permits: true, plumes: false, wells: false };
@@ -69,6 +74,31 @@ map.on('load', async () => {
     handleDeepLink();
     // Stats use queryRenderedFeatures — wait for first idle after data loads
     map.once('idle', updateStats);
+
+    drawer.init(map, {
+        onSelect: (layer, row) => {
+            const info = {
+                flares: { latCol: 'lat', lonCol: 'lon' },
+                permits: { latCol: 'latitude', lonCol: 'longitude' },
+                plumes: { latCol: 'latitude', lonCol: 'longitude' },
+                wells: { latCol: 'latitude', lonCol: 'longitude' },
+            }[layer];
+            if (!info) return;
+
+            // Build a mock feature to reuse existing detail functions
+            const lat = Number(row[info.latCol]);
+            const lon = Number(row[info.lonCol]);
+            const feature = {
+                type: 'Feature',
+                geometry: { type: 'Point', coordinates: [lon, lat] },
+                properties: row,
+                layer: { id: `${layer}-layer` },
+            };
+            overlappingFeatures = [feature];
+            overlapIndex = 0;
+            showFeatureDetail(feature);
+        }
+    });
 
     // Build operator index in background (enables search + detail attribution)
     db.buildOperatorIndex();
@@ -216,7 +246,7 @@ function addLayers() {
 }
 
 function plumeRadius() {
-    return ['interpolate', ['linear'], ['coalesce', ['get', 'emission_rate'], 100], 10, 3, 500, 6, 5000, 12];
+    return ['interpolate', ['linear'], ['coalesce', ['get', 'emission_rate'], 100], 10, 3, 500, 8, 5000, 18];
 }
 
 // Generate 750m square polygons and top-left label points from flare data
@@ -357,7 +387,7 @@ function bindUI() {
         cb.addEventListener('change', () => setLayerVisibility(layer, cb.checked));
         row.querySelector('.filter-label').addEventListener('click', () => {
             cb.checked = !cb.checked;
-            setLayerVisibility(layer, cb.checked);
+            cb.dispatchEvent(new Event('change'));
         });
     }
 
@@ -442,6 +472,19 @@ function bindUI() {
         overlappingFeatures = features;
         overlapIndex = 0;
         showFeatureDetail(features[0]);
+
+        // Sync selection to drawer
+        const f = features[0];
+        const layerId = f.layer.id;
+        if (layerId.startsWith('flare')) {
+            drawer.highlight('flares-layer', String(f.properties.flare_id));
+        } else if (layerId.startsWith('permits')) {
+            drawer.highlight('permits-layer', `${f.properties.latitude}_${f.properties.longitude}_${f.properties.name}`);
+        } else if (layerId.startsWith('plumes')) {
+            drawer.highlight('plumes-layer', String(f.properties.plume_id));
+        } else if (layerId.startsWith('wells')) {
+            drawer.highlight('wells-layer', String(f.properties.api));
+        }
     });
 
     // Cursor changes for interactive layers
@@ -457,52 +500,55 @@ function bindUI() {
     });
 }
 
+// Hash param helpers — coexist with MapLibre's #map=zoom/lat/lon
 function updateFlareUrl(flareId, mode) {
-    const url = new URL(window.location);
-    url.searchParams.delete('s2');
+    const hash = location.hash.replace(/^#/, '');
+    const mapPart = hash.split('&').find(p => p.startsWith('map='));
+    const parts = mapPart ? [mapPart] : [];
     if (flareId != null) {
-        url.searchParams.set('flare', flareId);
-        if (mode) url.searchParams.set('mode', mode);
-        else url.searchParams.delete('mode');
-    } else {
-        url.searchParams.delete('flare');
-        url.searchParams.delete('mode');
+        parts.push(`vnf=${encodeURIComponent(flareId)}`);
+        if (mode) parts.push(`mode=${encodeURIComponent(mode)}`);
     }
-    history.replaceState(null, '', url);
+    history.replaceState(null, '', location.pathname + location.search + '#' + parts.join('&'));
 }
 
 function updateS2Url(s2Id) {
-    const url = new URL(window.location);
-    url.searchParams.delete('flare');
-    url.searchParams.delete('mode');
-    if (s2Id != null) url.searchParams.set('s2', s2Id);
-    else url.searchParams.delete('s2');
-    history.replaceState(null, '', url);
+    const hash = location.hash.replace(/^#/, '');
+    const mapPart = hash.split('&').find(p => p.startsWith('map='));
+    const parts = mapPart ? [mapPart] : [];
+    if (s2Id != null) parts.push(`s2=${encodeURIComponent(s2Id)}`);
+    history.replaceState(null, '', location.pathname + location.search + '#' + parts.join('&'));
 }
 
 function handleDeepLink() {
-    const params = new URLSearchParams(window.location.search);
+    const hash = location.hash.replace(/^#/, '');
+    const params = {};
+    for (const part of hash.split('&')) {
+        const eq = part.indexOf('=');
+        if (eq > 0) params[part.slice(0, eq)] = decodeURIComponent(part.slice(eq + 1));
+    }
 
-    const s2Id = params.get('s2');
-    if (s2Id) {
-        const cluster = getCluster(s2Id);
+    if (params.s2) {
+        const cluster = getCluster(params.s2);
         if (cluster) {
+            updateS2Url(cluster.id);
             map.flyTo({ center: [cluster.lon, cluster.lat], zoom: 16 });
             showS2ClusterDetail(cluster);
         }
         return;
     }
 
-    const flareId = params.get('flare');
+    const flareId = params.vnf;
     if (!flareId) return;
 
     const feature = flareFeatures.find(f => String(f.properties.flare_id) === flareId);
     if (!feature) return;
 
     const [lon, lat] = feature.geometry.coordinates;
+    updateFlareUrl(flareId, params.mode || null);
     map.flyTo({ center: [lon, lat], zoom: 14 });
 
-    if (params.get('mode') === 's2') {
+    if (params.mode === 's2') {
         showEnhanceDetail(feature);
     } else {
         feature.layer = { id: 'flares-layer' };
@@ -520,11 +566,148 @@ function removeS2Badge() {
 
 function closeDetail() {
     removeS2Badge();
+    closeS2Pixels();
     updateFlareUrl(null);
     updateS2Url(null);
     document.getElementById('detail-panel').classList.add('hidden');
     overlappingFeatures = [];
     overlapIndex = 0;
+    drawer.highlight(null, null);
+}
+
+// ---------------------------------------------------------------------------
+// S2 pixel overlay — renders B12 COG pixels on the map (magma colormap)
+// ---------------------------------------------------------------------------
+
+// Magma-ish colormap: black → purple → red → orange → yellow
+const MAGMA_STOPS = [
+    [0.0, 0, 0, 4],
+    [0.1, 15, 4, 56],
+    [0.2, 58, 12, 108],
+    [0.3, 101, 21, 132],
+    [0.4, 143, 36, 130],
+    [0.5, 186, 55, 112],
+    [0.6, 221, 82, 83],
+    [0.7, 245, 119, 56],
+    [0.8, 254, 164, 37],
+    [0.9, 253, 210, 59],
+    [1.0, 252, 255, 164],
+];
+
+function magmaColor(t) {
+    t = Math.max(0, Math.min(1, t));
+    for (let i = 1; i < MAGMA_STOPS.length; i++) {
+        if (t <= MAGMA_STOPS[i][0]) {
+            const [t0, r0, g0, b0] = MAGMA_STOPS[i - 1];
+            const [t1, r1, g1, b1] = MAGMA_STOPS[i];
+            const f = (t - t0) / (t1 - t0);
+            return [
+                Math.round(r0 + f * (r1 - r0)),
+                Math.round(g0 + f * (g1 - g0)),
+                Math.round(b0 + f * (b1 - b0)),
+            ];
+        }
+    }
+    return [252, 255, 164];
+}
+
+function utmBoundsToWgs84(utmBounds, epsg) {
+    const { zone, isNorth } = utmParams(epsg);
+    const sw = utmToWgs84(utmBounds[0], utmBounds[1], zone, isNorth);
+    const ne = utmToWgs84(utmBounds[2], utmBounds[3], zone, isNorth);
+    return [sw[0], sw[1], ne[0], ne[1]]; // [west, south, east, north]
+}
+
+function closeS2Pixels() {
+    if (map.getLayer('cog-layer')) map.removeLayer('cog-layer');
+    if (map.getSource('cog-source')) map.removeSource('cog-source');
+}
+
+async function loadS2Pixels(det, clusterLon, clusterLat) {
+    closeS2Pixels();
+
+    const buffer = 250; // meters around detection
+    const epsg = det.epsg;
+    if (!epsg || !det.cog_b12) return;
+
+    const { zone, isNorth } = utmParams(epsg);
+    const [utmX, utmY] = wgs84ToUtm(clusterLon, clusterLat, zone, isNorth);
+    const utmBounds = [utmX - buffer, utmY - buffer, utmX + buffer, utmY + buffer];
+
+    // Mark active event
+    document.querySelectorAll('.s2-event-item').forEach(el => el.classList.remove('active'));
+    const activeEl = document.querySelector(`.s2-event-item[data-date="${det.date}"]`);
+    activeEl?.classList.add('active', 'loading');
+
+    try {
+        const b12Meta = await openCOG(det.cog_b12);
+        const { image, bbox: imgBbox, width, height, resX, resY } = b12Meta;
+        const [imgMinX, imgMinY, imgMaxX, imgMaxY] = imgBbox;
+
+        const x0 = Math.max(0, Math.floor((utmBounds[0] - imgMinX) / resX));
+        const y0 = Math.max(0, Math.floor((imgMaxY - utmBounds[3]) / resY));
+        const x1 = Math.min(width, Math.ceil((utmBounds[2] - imgMinX) / resX));
+        const y1 = Math.min(height, Math.ceil((imgMaxY - utmBounds[1]) / resY));
+
+        const windowWidth = x1 - x0, windowHeight = y1 - y0;
+        if (windowWidth <= 0 || windowHeight <= 0) throw new Error('Outside image bounds');
+
+        const actualUtmBounds = [imgMinX + x0 * resX, imgMaxY - y1 * resY, imgMinX + x1 * resX, imgMaxY - y0 * resY];
+        const bounds = utmBoundsToWgs84(actualUtmBounds, epsg);
+        if (!bounds) throw new Error('Could not convert bounds');
+
+        const rasters = await image.readRasters({
+            window: [x0, y0, x1, y1],
+            width: Math.min(windowWidth, 256),
+            height: Math.min(windowHeight, 256)
+        });
+
+        const data = rasters[0];
+        const w = rasters.width, h = rasters.height;
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        const imgData = ctx.createImageData(w, h);
+
+        const scale = 0.0001, offset = -0.1, threshold = 0.6, ceiling = 1.5;
+        for (let i = 0; i < data.length; i++) {
+            const v = data[i] * scale + offset;
+            if (v <= threshold) {
+                imgData.data[i * 4 + 3] = 0;
+            } else {
+                const t = Math.min(1, (v - threshold) / (ceiling - threshold));
+                const [r, g, b] = magmaColor(t);
+                imgData.data[i * 4] = r;
+                imgData.data[i * 4 + 1] = g;
+                imgData.data[i * 4 + 2] = b;
+                imgData.data[i * 4 + 3] = 255;
+            }
+        }
+        ctx.putImageData(imgData, 0, 0);
+
+        closeS2Pixels(); // remove any added while fetching
+
+        const coords = [
+            [bounds[0], bounds[3]], [bounds[2], bounds[3]],
+            [bounds[2], bounds[1]], [bounds[0], bounds[1]]
+        ];
+
+        map.addSource('cog-source', {
+            type: 'image',
+            url: canvas.toDataURL(),
+            coordinates: coords
+        });
+        map.addLayer({
+            id: 'cog-layer', type: 'raster', source: 'cog-source',
+            paint: { 'raster-opacity': 1, 'raster-resampling': 'nearest' }
+        }, 's2-points');
+
+        activeEl?.classList.remove('loading');
+    } catch (err) {
+        console.error('Failed to load S2 COG:', err);
+        activeEl?.classList.remove('loading');
+    }
 }
 
 function showFeatureDetail(feature) {
@@ -544,13 +727,19 @@ function showFeatureDetail(feature) {
         }
     }
 
-    // Update overlap nav — only for overlapping permits
-    const permitFeatures = overlappingFeatures.filter(f => f.layer.id.startsWith('permits-'));
+    // Update overlap nav for overlapping permits or plumes
+    const layer0 = overlappingFeatures[0]?.layer?.id || '';
+    const group = layer0.startsWith('permits-') ? 'permits-' : layer0.startsWith('plumes-') ? 'plumes-' : null;
     const nav = document.getElementById('overlap-nav');
-    if (permitFeatures.length > 1) {
-        overlappingFeatures = permitFeatures;
-        nav.classList.remove('hidden');
-        document.getElementById('overlap-count').textContent = `${overlapIndex + 1} / ${overlappingFeatures.length}`;
+    if (group) {
+        const grouped = overlappingFeatures.filter(f => f.layer.id.startsWith(group));
+        if (grouped.length > 1) {
+            overlappingFeatures = grouped;
+            nav.classList.remove('hidden');
+            document.getElementById('overlap-count').textContent = `${overlapIndex + 1} / ${overlappingFeatures.length}`;
+        } else {
+            nav.classList.add('hidden');
+        }
     } else {
         nav.classList.add('hidden');
     }
@@ -814,12 +1003,14 @@ function showEnhanceDetail(feature) {
             const list = document.getElementById('s2-cluster-list');
             if (list) {
                 list.className = 'enhance-results';
-                list.innerHTML = s.clusters.map(c =>
-                    `<div class="enhance-cluster" data-id="${c.id}">
-                        <span class="cluster-dot"></span>
-                        B12 ${c.max_b12.toFixed(2)} · ${c.detection_count} det · ${c.first_date}${c.first_date !== c.last_date ? ` – ${c.last_date}` : ''}
-                    </div>`
-                ).join('');
+                list.innerHTML = s.clusters.map(c => {
+                    const b = c.max_b12;
+                    const color = b < 0.3 ? '#660800' : b < 0.5 ? '#991100' : b < 0.7 ? '#cc2200' : b < 0.9 ? '#ff4422' : b < 1.2 ? '#ff8844' : '#ffcc44';
+                    return `<div class="enhance-cluster" data-id="${c.id}">
+                        <span class="cluster-dot" style="background:${color}"></span>
+                        B12 ${b.toFixed(2)} · ${c.detection_count} det · ${c.first_date}${c.first_date !== c.last_date ? ` – ${c.last_date}` : ''}
+                    </div>`;
+                }).join('');
                 list.querySelectorAll('.enhance-cluster').forEach(el => {
                     el.addEventListener('click', () => {
                         const cluster = getCluster(el.dataset.id);
@@ -839,6 +1030,7 @@ function showEnhanceDetail(feature) {
 
 function showS2ClusterDetail(cluster) {
     removeS2Badge();
+    closeS2Pixels();
     const panel = document.getElementById('detail-panel');
     updateS2Url(cluster.id);
 
@@ -852,6 +1044,19 @@ function showS2ClusterDetail(cluster) {
 
     document.getElementById('overlap-nav').classList.add('hidden');
     document.getElementById('intensity-chart').innerHTML = '';
+
+    // Build detection event list (sorted newest first)
+    const dets = (cluster.detections || []).slice().sort((a, b) => b.date.localeCompare(a.date));
+    const eventListHtml = dets.map(d => {
+        const b = d.max_b12;
+        const color = b < 0.3 ? '#660800' : b < 0.5 ? '#991100' : b < 0.7 ? '#cc2200' : b < 0.9 ? '#ff4422' : b < 1.2 ? '#ff8844' : '#ffcc44';
+        return `<div class="s2-event-item" data-date="${d.date}">
+            <span class="s2-event-dot" style="background:${color}"></span>
+            <span class="s2-event-date">${formatDate(d.date)}</span>
+            <span class="s2-event-b12">B12 ${b.toFixed(2)}</span>
+        </div>`;
+    }).join('');
+
     document.getElementById('detail-body').innerHTML = `
         <div class="stats-grid">
             <div class="stat"><div class="stat-big">${cluster.max_b12.toFixed(2)}</div><div class="stat-unit">peak B12</div></div>
@@ -862,7 +1067,37 @@ function showS2ClusterDetail(cluster) {
             ${field('Last detected', formatDate(cluster.last_date))}
         </div>
         <div id="s2-permit-section"></div>
+        <div id="s2-event-list" class="s2-event-list">${eventListHtml}</div>
     `;
+
+    // Bind click handlers for event items — fetch COG on demand via STAC
+    document.querySelectorAll('.s2-event-item').forEach(el => {
+        el.addEventListener('click', async () => {
+            const date = el.dataset.date;
+            // Build tight bbox around cluster location
+            const dLat = 400 / 110540;
+            const dLon = 400 / (111320 * Math.cos(cluster.lat * Math.PI / 180));
+            const bbox = [cluster.lon - dLon, cluster.lat - dLat, cluster.lon + dLon, cluster.lat + dLat];
+
+            el.classList.add('loading');
+            try {
+                // Find STAC item for this date
+                let item = null;
+                for await (const it of searchSTAC(bbox, date, date)) {
+                    item = it;
+                    break; // first match is enough
+                }
+                if (!item?.bands?.b12 || !item.epsg) {
+                    el.classList.remove('loading');
+                    return;
+                }
+                await loadS2Pixels({ date, cog_b12: item.bands.b12, epsg: item.epsg }, cluster.lon, cluster.lat);
+            } catch (err) {
+                console.error('STAC lookup failed:', err);
+                el.classList.remove('loading');
+            }
+        });
+    });
 
     // Timeline chart from cluster detections
     if (cluster.detections?.length) {

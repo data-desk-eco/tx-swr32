@@ -13,6 +13,7 @@ Flaring analysis for the Permian Basin. Matches VIIRS Nightfire satellite flare 
 - `scripts/fetch_plumes.py` — fetches Carbon Mapper + IMEO methane plume data
 - `queries/load.sql` → `rrc.sql` → `export.sql` — SQL pipeline (load → normalise → export parquets)
 - `web/` — interactive map (MapLibre GL + DuckDB WASM, zero npm deps)
+- `web/drawer.js` — sliding data drawer (tabbed table view of flares/permits/plumes/wells with sort, viewport-sync)
 - `web/enhance.js` — Sentinel-2 "Enhance" feature (spawns s2-flares worker for single-flare deep analysis)
 - `web/vendor/s2-flares/` — shared Sentinel-2 detection library (git submodule)
 
@@ -33,7 +34,8 @@ Client-side (DuckDB WASM): operator attribution, plume display, operator search 
 2. **Lease matching**: spatial via `rrc.leases` (union of OTLS survey polygons containing each lease's wells). Wells are spatial-joined to OTLS surveys (`rrc.well_surveys`), then survey polygons are unioned per lease. VNF sites within a lease footprint (`ST_Contains`) get allocated to that lease. Vertically stacked leases (different depth intervals) share surface geometry.
 3. **Operator attribution** (client-side, DuckDB WASM): combined evidence from permits and wells within 375m. Prefers operators with permit filings, then most evidence (wells + permits), then closest distance. Confidence: `sole`/`majority`/`contested`. Pre-computed for all flares at startup (`flare_operators` in-memory table); S2 clusters use live spatial queries.
 4. **Exclusions**: EPA GHGRP non-upstream facilities within 1.5km; Gas Plant permits filtered out.
-6. **Sentinel-2 enhancement**: Per-flare deep analysis using s2-flares library. Searches Sentinel-2 archive (last year) over a 750m bbox, runs detection at 20m resolution, clusters results incrementally after each image. Accessed via "Enhance with Sentinel-2" button in flare detail panel. Each S2 cluster is a first-class map feature with its own detail card (B12 stats, timeline chart, permit coverage) and deep link (`?s2=HASH`). Clusters get a deterministic hash ID based on anchor position. Enhancement runs in the background — navigating away doesn't cancel it; only the explicit "Stop Analysis" button does. Stopped analyses resume from where they left off (worker skips already-processed dates). Results cached to localStorage with a `complete` flag distinguishing finished vs partial runs.
+6. **Sentinel-2 enhancement**: Per-flare deep analysis using s2-flares library. Searches Sentinel-2 archive (last year) over a 750m bbox, runs detection at 20m resolution, clusters results incrementally after each image. Accessed via "Enhance with Sentinel-2" button in flare detail panel. Each S2 cluster is a first-class map feature with its own detail card (B12 stats, timeline chart, permit coverage) and deep link (`#s2=HASH`). Clusters get a deterministic hash ID based on anchor position. Enhancement runs in the background — navigating away doesn't cancel it; only the explicit "Stop Analysis" button does. Stopped analyses resume from where they left off (worker skips already-processed dates). Results cached to localStorage with a `complete` flag distinguishing finished vs partial runs.
+7. **S2 pixel overlay**: Clicking a detection date in an S2 cluster detail card fetches the Sentinel-2 B12 COG via STAC, reads a 250m window around the cluster, and renders hot pixels (>0.6 reflectance) on the map with a magma colormap and nearest-neighbour resampling.
 
 ## Key details
 
@@ -46,7 +48,8 @@ Client-side (DuckDB WASM): operator attribution, plume display, operator search 
 - **Permian bbox**: 30-33.5N, 100-104.5W (applied at export time). Texas-only: sites above 32°N must be east of -103.064° (TX-NM border) to exclude New Mexico.
 - **Match radius**: 375m (VIIRS M-band pixel radius = 750m / 2). Bounding box pre-filter ±0.0034° (~375m).
 - **VIIRS pixel squares**: 750m squares generated client-side in the web app for visual review of spatial matching.
-- **Deep linking**: `?flare=ID` opens VNF detail, `?flare=ID&mode=s2` starts S2 enhancement, `?s2=HASH` opens an S2 cluster detail card. Map position via `#map=zoom/lat/lon` (MapLibre hash).
+- **Deep linking**: all params in the hash alongside MapLibre's map position. `#map=zoom/lat/lon&vnf=ID` opens VNF detail, `#map=…&vnf=ID&mode=s2` starts S2 enhancement, `#map=…&s2=HASH` opens an S2 cluster detail card.
+- **Colors**: defined centrally as CSS custom properties (`--color-flare`, `--color-permit`, `--color-plume`, `--color-well`) in `:root`; JS reads them via `getComputedStyle`.
 
 ## Commands
 

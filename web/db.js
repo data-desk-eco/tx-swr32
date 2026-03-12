@@ -405,3 +405,56 @@ export async function queryWells({ operator, bounds } = {}) {
     };
 }
 
+export async function queryTableRaw(table, { bounds, orderBy, orderDir = 'ASC', limit = 1000 } = {}) {
+    const allowed = new Set(['flares', 'permits', 'plumes', 'wells']);
+    if (!allowed.has(table)) throw new Error(`Unknown table: ${table}`);
+
+    const latCol = table === 'flares' ? 'lat' : 'latitude';
+    const lonCol = table === 'flares' ? 'lon' : 'longitude';
+
+    let where = 'WHERE 1=1';
+    if (table === 'permits') where += ' AND latitude IS NOT NULL AND longitude IS NOT NULL';
+    if (bounds) {
+        where += ` AND ${latCol} BETWEEN ${bounds.south} AND ${bounds.north}`;
+        where += ` AND ${lonCol} BETWEEN ${bounds.west} AND ${bounds.east}`;
+    }
+
+    let order = '';
+    if (orderBy) {
+        const dir = orderDir === 'DESC' ? 'DESC' : 'ASC';
+        order = `ORDER BY "${orderBy}" ${dir}`;
+    }
+
+    // Cast date columns to VARCHAR for display
+    const dateSelect = table === 'permits'
+        ? `SELECT * REPLACE (
+               CAST(earliest_effective AS VARCHAR) AS earliest_effective,
+               CAST(latest_expiration AS VARCHAR) AS latest_expiration
+           )`
+        : table === 'plumes'
+        ? `SELECT * REPLACE (CAST(date AS VARCHAR) AS date)`
+        : 'SELECT *';
+
+    const result = await query(`${dateSelect} FROM '${table}.parquet' ${where} ${order} LIMIT ${limit}`);
+    return rows(result);
+}
+
+export async function queryTableCount(table, { bounds } = {}) {
+    const allowed = new Set(['flares', 'permits', 'plumes', 'wells']);
+    if (!allowed.has(table)) throw new Error(`Unknown table: ${table}`);
+
+    const latCol = table === 'flares' ? 'lat' : 'latitude';
+    const lonCol = table === 'flares' ? 'lon' : 'longitude';
+
+    let where = 'WHERE 1=1';
+    if (table === 'permits') where += ' AND latitude IS NOT NULL AND longitude IS NOT NULL';
+    if (bounds) {
+        where += ` AND ${latCol} BETWEEN ${bounds.south} AND ${bounds.north}`;
+        where += ` AND ${lonCol} BETWEEN ${bounds.west} AND ${bounds.east}`;
+    }
+
+    const result = await query(`SELECT COUNT(*) AS cnt FROM '${table}.parquet' ${where}`);
+    const r = rows(result);
+    return r[0]?.cnt || 0;
+}
+
