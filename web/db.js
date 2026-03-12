@@ -51,7 +51,7 @@ export async function queryFlares({ operator } = {}) {
     if (operator) where += ` AND lower(operator_name) LIKE '%${operator.toLowerCase().replace(/'/g, "''")}%'`;
 
     const result = await query(`
-        SELECT flare_id, lat, lon, detection_days, dark_days, total_days, dark_pct,
+        SELECT flare_id, lat, lon, detection_days,
             total_rh_mw, avg_rh_mw, operator_name, confidence,
             nearest_permit_km, permit_name, site_name,
             first_detected, last_detected, near_excluded_facility
@@ -70,7 +70,7 @@ export async function queryFlares({ operator } = {}) {
 
 export async function queryDetections(flareId) {
     const result = await query(`
-        SELECT date, rh_mw, is_dark
+        SELECT date, rh_mw
         FROM 'detections.parquet'
         WHERE flare_id = ${Number(flareId)}
         ORDER BY date
@@ -81,8 +81,7 @@ export async function queryDetections(flareId) {
 export async function queryFlareLeases(flareId) {
     const result = await query(`
         SELECT lease_district, lease_number, oil_gas_code, well_count,
-            reported_flared_mcf, unpermitted_flared_mcf,
-            permitted_days, total_days, lease_operator, lease_name
+            reported_flared_mcf, lease_operator, lease_name
         FROM 'flare_leases.parquet'
         WHERE flare_id = ${Number(flareId)}
     `);

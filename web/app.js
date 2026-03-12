@@ -2,8 +2,7 @@ import * as db from './db.js';
 import { enhance, cancelEnhance, setUpdateCallback, getState, loadAllCached } from './enhance.js';
 
 const COLORS = {
-    dark: '#ff4422',
-    permitted: '#00ff88',
+    flare: '#ffaa44',
     permit: '#00ccff',
     plume: '#ff44ff',
     well: 'rgba(220,220,230,0.8)'
@@ -301,11 +300,8 @@ function updateMapCentre() {
 function updateStats() {
     const features = map.queryRenderedFeatures({ layers: ['flares-layer'] });
     const sites = features.length;
-    const darkSites = features.filter(f => f.properties.dark_pct > 50).length;
-    const darkRate = sites > 0 ? Math.round(100 * darkSites / sites) : 0;
     const totalMw = features.reduce((s, f) => s + (Number(f.properties.total_rh_mw) || 0), 0);
     document.getElementById('stat-sites').textContent = sites.toLocaleString();
-    document.getElementById('stat-dark-rate').textContent = sites > 0 ? darkRate + '%' : '--';
     document.getElementById('stat-mw').textContent = sites > 0 ? Math.round(totalMw).toLocaleString() : '--';
 }
 
@@ -478,7 +474,11 @@ function handleDeepLink() {
 }
 
 function removeS2Badge() {
-    document.getElementById('s2-badge')?.remove();
+    const badge = document.getElementById('s2-badge') || document.getElementById('detail-badge');
+    if (badge) {
+        badge.id = 'detail-badge';
+        badge.classList.add('hidden');
+    }
 }
 
 function closeDetail() {
@@ -524,11 +524,9 @@ function field(label, value) {
 }
 
 function flareStatus(p) {
-    const isDark = p.dark_pct > 50;
     const isExcluded = p.near_excluded_facility === true || p.near_excluded_facility === 'true';
-    const status = isExcluded ? 'excluded' : (isDark ? 'dark' : 'permitted');
-    const label = isExcluded ? 'Excluded' : (isDark ? `${p.dark_pct}% dark` : `${100 - p.dark_pct}% permitted`);
-    return { status, label };
+    if (isExcluded) return { status: 'excluded', label: 'Excluded' };
+    return { status: null, label: null };
 }
 
 function permitInfoFromVnf(p) {
@@ -609,10 +607,13 @@ async function showFlareDetail(feature) {
 
     document.getElementById('detail-title').textContent = `Flare ${p.flare_id}`;
     document.getElementById('detail-coords').textContent = `${Number(p.lat).toFixed(4)}, ${Number(p.lon).toFixed(4)}`;
+    removeS2Badge();
     const badge = document.getElementById('detail-badge');
-    badge.className = `status-badge ${status}`;
-    badge.textContent = statusLabel;
-    badge.classList.remove('hidden');
+    if (status) {
+        badge.className = `status-badge ${status}`;
+        badge.textContent = statusLabel;
+        badge.classList.remove('hidden');
+    }
 
     let leaseHtml = '';
     try {
@@ -631,7 +632,7 @@ async function showFlareDetail(feature) {
     document.getElementById('detail-body').innerHTML = `
         <div class="stats-grid">
             <div class="stat"><div class="stat-big">${num(p.total_rh_mw)}</div><div class="stat-unit">total MW</div></div>
-            <div class="stat"><div class="stat-big">${num(p.dark_days)}/${num(p.total_days)}</div><div class="stat-unit">dark/total days</div></div>
+            <div class="stat"><div class="stat-big">${num(p.detection_days)}</div><div class="stat-unit">detection days</div></div>
         </div>
         ${permitCoverageHtml(permitInfoFromVnf(p))}
         ${leaseHtml}
@@ -658,7 +659,7 @@ function showPermitDetail(feature) {
     const p = feature.properties;
     const rate = Number(p.max_release_rate_mcf_day);
     document.getElementById('intensity-chart').innerHTML = '';
-    document.getElementById('detail-badge').classList.add('hidden');
+    removeS2Badge();
     document.getElementById('detail-title').textContent = p.name || 'Permit location';
     document.getElementById('detail-coords').textContent = `${Number(p.latitude).toFixed(4)}, ${Number(p.longitude).toFixed(4)}`;
     document.getElementById('detail-body').innerHTML = `
@@ -690,7 +691,7 @@ function plumeUrl(source, id) {
 function showPlumeDetail(feature) {
     const p = feature.properties;
     document.getElementById('intensity-chart').innerHTML = '';
-    document.getElementById('detail-badge').classList.add('hidden');
+    removeS2Badge();
     const url = plumeUrl(p.source, p.plume_id);
     const titleEl = document.getElementById('detail-title');
     if (url) {
@@ -717,7 +718,7 @@ function showPlumeDetail(feature) {
 function showWellDetail(feature) {
     const p = feature.properties;
     document.getElementById('intensity-chart').innerHTML = '';
-    document.getElementById('detail-badge').classList.add('hidden');
+    removeS2Badge();
     document.getElementById('detail-title').textContent = `Well ${p.api}`;
     document.getElementById('detail-coords').textContent = `${Number(p.latitude).toFixed(4)}, ${Number(p.longitude).toFixed(4)}`;
     document.getElementById('detail-body').innerHTML = `
@@ -749,25 +750,19 @@ function nearestPermit(lat, lon, permits) {
 function showEnhanceDetail(feature) {
     const p = feature.properties;
     const panel = document.getElementById('detail-panel');
-    const { status, label: statusLabel } = flareStatus(p);
     updateFlareUrl(p.flare_id, 's2');
 
     document.getElementById('detail-title').textContent = `Sentinel-2 · Flare ${p.flare_id}`;
     document.getElementById('detail-coords').textContent = `${Number(p.lat).toFixed(4)}, ${Number(p.lon).toFixed(4)}`;
+    removeS2Badge();
     const badge = document.getElementById('detail-badge');
-    badge.className = `status-badge ${status}`;
-    badge.textContent = statusLabel;
+    badge.className = 'status-badge s2';
+    badge.id = 's2-badge';
+    badge.textContent = 'Enhancing';
     badge.classList.remove('hidden');
 
     // Hide overlap nav for enhance mode
     document.getElementById('overlap-nav').classList.add('hidden');
-
-    // Secondary badge for S2 progress
-    const s2Badge = document.createElement('span');
-    s2Badge.className = 'status-badge s2';
-    s2Badge.id = 's2-badge';
-    s2Badge.textContent = 'Enhancing';
-    badge.parentElement.appendChild(s2Badge);
 
     document.getElementById('intensity-chart').innerHTML = '';
     document.getElementById('detail-body').innerHTML = `
@@ -821,7 +816,7 @@ function showEnhanceDetail(feature) {
                 ? `${s.progress.done} / ${s.progress.total}${s.progress.skipped ? ` (${s.progress.skipped} cached)` : ''}`
                 : 'Searching...';
         } else if (s.error) {
-            s2b.className = 'status-badge dark';
+            s2b.className = 'status-badge excluded';
             s2b.textContent = 'Failed';
         } else if (s.clusters) {
             s2b.textContent = `${s.clusters.length} source${s.clusters.length !== 1 ? 's' : ''}`;
@@ -947,9 +942,7 @@ function renderSparkline(detections) {
         const t = val > 0 ? Math.max(0, Math.min(1, (Math.log(Math.max(lo, val)) - Math.log(lo)) / (Math.log(hi) - Math.log(lo)))) : 0;
         const y = margin.top + innerH - t * innerH;
         const mw = det.rh_mw || 0;
-        const color = det.is_dark
-            ? mw < 0.3 ? '#660800' : mw < 0.6 ? '#991100' : mw < 0.9 ? '#cc2200' : mw < 1.3 ? '#ff4422' : mw < 2 ? '#ff8844' : mw < 4 ? '#ffcc44' : '#ffeeaa'
-            : mw < 0.3 ? '#003318' : mw < 0.6 ? '#006633' : mw < 0.9 ? '#00cc66' : mw < 1.3 ? '#00ff88' : mw < 2 ? '#66ffaa' : mw < 4 ? '#aaffcc' : '#ccffdd';
+        const color = mw < 0.3 ? '#663300' : mw < 0.6 ? '#995500' : mw < 0.9 ? '#cc7700' : mw < 1.3 ? '#ff9922' : mw < 2 ? '#ffaa44' : mw < 4 ? '#ffcc66' : '#ffeeaa';
         svg += `<circle class="chart-dot" cx="${x}" cy="${y}" r="2" fill="${color}" opacity="0.8"/>`;
     });
 

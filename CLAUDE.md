@@ -1,6 +1,6 @@
 # gaslight
 
-Dark flaring analysis for the Permian Basin. Matches VIIRS Nightfire satellite flare detections to SWR 32 permitted flare locations and oil/gas lease footprints, then cross-references permit dates and self-reported flaring volumes to identify unpermitted ("dark") flaring.
+Flaring analysis for the Permian Basin. Matches VIIRS Nightfire satellite flare detections and Sentinel-2 imagery to SWR 32 permitted flare locations, oil/gas lease footprints, and methane plume observations.
 
 ## Layout
 
@@ -22,19 +22,18 @@ Three-schema database design:
 
 - **`raw`** — staging area, faithful load of source files (CSVs, shapefiles, DSVs)
 - **`rrc`** — Texas oil & gas foundation tables derived from RRC data (permits, leases, production, well-survey joins). Designed to support future analysis beyond flaring.
-- **`flaring`** — Permian Basin dark flaring analysis (VNF sites, spatial matching, plume attribution, operator scorecards)
+- **`flaring`** — Permian Basin flaring analysis (VNF sites, spatial matching, plume attribution, operator scorecards)
 
 Pipeline: `load → rrc → flaring → export`
 
 ## Methodology
 
-1. **Dark flaring**: VNF flare sites matched to SWR 32 permit locations and RRC wells within 375m (VIIRS M-band pixel radius). For each detection-day, if any nearby permit covers the date, it's "permitted"; otherwise "dark".
+1. **Flare detection**: VNF flare sites matched to SWR 32 permit locations and RRC wells within 375m (VIIRS M-band pixel radius).
 2. **Lease matching**: spatial via `rrc.leases` (union of OTLS survey polygons containing each lease's wells). Wells are spatial-joined to OTLS surveys (`rrc.well_surveys`), then survey polygons are unioned per lease. VNF sites within a lease footprint (`ST_Contains`) get allocated to that lease. Vertically stacked leases (different depth intervals) share surface geometry.
-3. **Reported flaring**: PDQ gas disposition data (code 04 = vented/flared) cross-referenced with permit coverage to estimate unpermitted volumes.
-4. **Operator attribution**: combined evidence from permits and wells within pixel radius. Prefers operators with permit filings, then most evidence (wells + permits), then closest distance. Confidence: `sole`/`majority`/`contested`.
-5. **Exclusions**: EPA GHGRP non-upstream facilities within 1.5km; Gas Plant permits filtered out.
-6. **Plume attribution**: Carbon Mapper + IMEO methane plumes matched to wells and VNF sites within 1km. Classified as flaring/unlit/wellpad/unmatched.
-7. **Sentinel-2 enhancement**: Per-flare deep analysis using s2-flares library. Searches Sentinel-2 archive (last year) over a 750m bbox, runs detection at 20m resolution, clusters results. Accessed via "Enhance with Sentinel-2" button in flare detail panel. Shows live permit coverage analysis by matching S2 detections to nearby permits (same shared UI as VNF view). Detections cached incrementally to localStorage; previously processed images are skipped on resume.
+3. **Operator attribution**: combined evidence from permits and wells within pixel radius. Prefers operators with permit filings, then most evidence (wells + permits), then closest distance. Confidence: `sole`/`majority`/`contested`.
+4. **Exclusions**: EPA GHGRP non-upstream facilities within 1.5km; Gas Plant permits filtered out.
+5. **Plume attribution**: Carbon Mapper + IMEO methane plumes matched to wells and VNF sites within 1km. Classified as flaring/unlit/wellpad/unmatched.
+6. **Sentinel-2 enhancement**: Per-flare deep analysis using s2-flares library. Searches Sentinel-2 archive (last year) over a 750m bbox, runs detection at 20m resolution, clusters results. Accessed via "Enhance with Sentinel-2" button in flare detail panel. Shows live permit coverage analysis by matching S2 detections to nearby permits (same shared UI as VNF view). Detections cached incrementally to localStorage; previously processed images are skipped on resume. S2 detections are first-class map features — cached detections load at startup and are clickable.
 
 ## Key details
 

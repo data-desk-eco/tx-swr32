@@ -10,8 +10,6 @@ COPY (
         so.confidence,
         round(so.nearest_permit_km, 3) AS nearest_permit_km,
         so.nearest_permit_name AS permit_name, p.site_name,
-        d.dark_days, d.total_days,
-        round(100.0 * d.dark_days / NULLIF(d.total_days, 0), 1) AS dark_pct,
         round(d.total_rh_mw, 1) AS total_rh_mw,
         round(d.avg_rh_mw, 2) AS avg_rh_mw
     FROM flaring.sites fs
@@ -19,11 +17,10 @@ COPY (
     LEFT JOIN rrc.permits p ON p.filing_no = so.nearest_filing_no
     LEFT JOIN (
         SELECT flare_id,
-            count(*) FILTER (WHERE is_dark) AS dark_days,
-            count(*) AS total_days,
             sum(rh_mw) AS total_rh_mw,
             avg(rh_mw) FILTER (WHERE rh_mw > 0) AS avg_rh_mw
-        FROM flaring.dark_flares GROUP BY flare_id
+        FROM raw.vnf WHERE detected
+        GROUP BY flare_id
     ) d USING (flare_id)
 ) TO 'web/data/flares.parquet' (FORMAT PARQUET, COMPRESSION ZSTD);
 
@@ -31,20 +28,16 @@ COPY (
     SELECT
         sl.flare_id, sl.lease_district, sl.lease_number, sl.oil_gas_code, sl.well_count,
         round(COALESCE(lf.reported_mcf, 0), 0) AS reported_flared_mcf,
-        round(COALESCE(lf.unpermitted_mcf, 0), 0) AS unpermitted_flared_mcf,
-        COALESCE(lf.permitted_days, 0) AS permitted_days,
-        COALESCE(lf.total_days, 0) AS total_days,
         lf.operator_name AS lease_operator, lf.lease_name
     FROM flaring.site_leases sl
     LEFT JOIN (
         SELECT lease_district, lease_number,
-            sum(reported_flared_mcf) AS reported_mcf,
-            sum(unpermitted_flared_mcf) AS unpermitted_mcf,
-            sum(permit_days) AS permitted_days,
-            count(*) * 30 AS total_days,
+            sum(total_flared_mcf) AS reported_mcf,
             mode(operator_name) AS operator_name,
             mode(lease_name) AS lease_name
-        FROM flaring.lease_flaring GROUP BY 1, 2
+        FROM rrc.production
+        WHERE district IN ('7B','7C','08','8A')
+        GROUP BY 1, 2
     ) lf ON LPAD(lf.lease_district, 2, '0') = LPAD(sl.lease_district, 2, '0')
         AND LPAD(lf.lease_number, 6, '0') = LPAD(sl.lease_number, 6, '0')
 ) TO 'web/data/flare_leases.parquet' (FORMAT PARQUET, COMPRESSION ZSTD);
@@ -92,10 +85,8 @@ COPY (
 
 COPY (
     SELECT v.flare_id, CAST(v.date AS VARCHAR) AS date,
-        round(v.rh_mw, 2) AS rh_mw,
-        COALESCE(df.is_dark, TRUE) AS is_dark
+        round(v.rh_mw, 2) AS rh_mw
     FROM raw.vnf v
     JOIN flaring.sites fs USING (flare_id)
-    LEFT JOIN flaring.dark_flares df ON df.flare_id = v.flare_id AND df.date = v.date
     WHERE v.detected AND v.date >= fs.first_detected
 ) TO 'web/data/detections.parquet' (FORMAT PARQUET, COMPRESSION ZSTD);

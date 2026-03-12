@@ -7,8 +7,6 @@
     --text-muted: rgba(255, 255, 255, 0.6);
     --text-faint: rgba(255, 255, 255, 0.4);
     --text-hint: rgba(255, 255, 255, 0.35);
-    --color-dark: #ff4422;
-    --color-permitted: #00ff88;
     --color-excluded: #888;
     --color-permit: #00ccff;
     --color-plume: #ff44ff;
@@ -222,8 +220,6 @@ html, body { width: 100%; height: 100%; font-family: 'Inter', -apple-system, Bli
 .status-badge {
     display: inline-block; padding: 2px 8px; font-size: var(--font-xs); font-weight: 500; border: 1px solid;
 }
-.status-badge.dark { color: var(--color-dark); border-color: var(--color-dark); background: rgba(255, 68, 34, 0.15); }
-.status-badge.permitted { color: var(--color-permitted); border-color: var(--color-permitted); background: rgba(0, 255, 136, 0.15); }
 .status-badge.excluded { color: var(--color-excluded); border-color: var(--color-excluded); background: rgba(102, 102, 102, 0.15); }
 .status-badge.s2 { color: #ffaa44; border-color: #ffaa44; background: rgba(255, 170, 68, 0.15); font-variant-numeric: tabular-nums; }
 .detail-title-row { display: flex; align-items: center; gap: 8px; }

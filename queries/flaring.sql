@@ -175,128 +175,6 @@ JOIN rrc.leases ll
     AND ST_Contains(ll.geom, fs.geom)
 WHERE NOT fs.near_excluded_facility;
 
--- Dark flare detection (site × day)
-CREATE OR REPLACE TABLE flaring.dark_flares AS
-WITH matched AS (
-    SELECT
-        v.flare_id, v.date, v.rh_mw, v.temp_k,
-        v.lat AS vnf_lat, v.lon AS vnf_lon,
-        so.operator_name, so.operator_no,
-        so.nearest_filing_no AS loc_permit,
-        so.nearest_permit_km AS permit_distance_km,
-        so.lease_district AS permit_lease_district,
-        so.confidence,
-        spc.filing_no IS NULL AS is_dark,
-        ROW_NUMBER() OVER (
-            PARTITION BY v.flare_id, v.date
-            ORDER BY (spc.filing_no IS NOT NULL) DESC
-        ) AS rn
-    FROM raw.vnf v
-    JOIN flaring.sites fs USING (flare_id)
-    LEFT JOIN flaring.site_operators so USING (flare_id)
-    LEFT JOIN (
-        flaring.site_permit_matches sm
-        JOIN flaring.site_permit_coverage spc
-            ON spc.flare_id = sm.flare_id AND spc.filing_no = sm.filing_no
-    ) ON sm.flare_id = v.flare_id
-        AND spc.effective_dt <= v.date
-        AND (spc.expiration_dt IS NULL OR spc.expiration_dt >= v.date)
-    WHERE v.detected AND NOT fs.near_excluded_facility
-      AND v.date >= getvariable('start_date')
-)
-SELECT * EXCLUDE (rn) FROM matched WHERE rn = 1;
-
--- VNF detection-days allocated to leases (weighted when site spans multiple)
-CREATE OR REPLACE TABLE flaring.lease_allocation AS
-WITH detection_leases AS (
-    SELECT v.flare_id, v.date, v.rh_mw,
-        COALESCE(df.is_dark, TRUE) AS is_dark,
-        COALESCE(df.operator_name, so.operator_name) AS operator_name,
-        sl.lease_district, sl.lease_number
-    FROM raw.vnf v
-    JOIN flaring.sites fs USING (flare_id)
-    JOIN flaring.site_leases sl ON sl.flare_id = v.flare_id
-    LEFT JOIN flaring.dark_flares df ON df.flare_id = v.flare_id AND df.date = v.date
-    LEFT JOIN flaring.site_operators so ON so.flare_id = v.flare_id
-    WHERE v.detected AND NOT fs.near_excluded_facility
-      AND v.date >= getvariable('start_date')
-),
-with_weights AS (
-    SELECT *, 1.0 / COUNT(*) OVER (PARTITION BY flare_id, date) AS weight
-    FROM detection_leases
-)
-SELECT flare_id, date, is_dark, operator_name,
-    lease_district, lease_number,
-    rh_mw * weight AS allocated_rh_mw, weight
-FROM with_weights;
-
--- Monthly lease-level flaring summary (VNF + reported + permit coverage)
-CREATE OR REPLACE TABLE flaring.lease_flaring AS
-WITH months AS (
-    SELECT DISTINCT date_trunc('month', date)::DATE AS month
-    FROM flaring.dark_flares
-),
-reported AS (
-    SELECT district AS lease_district, lease_number,
-        make_date(year, month, 1) AS month,
-        operator_name, lease_name, total_flared_mcf
-    FROM rrc.production
-    WHERE district IN ('7B','7C','08','8A')
-      AND year >= extract(year FROM getvariable('start_date'))
-),
-vnf AS (
-    SELECT lease_district, lease_number,
-        date_trunc('month', date)::DATE AS month,
-        count(*) AS vnf_detection_days,
-        round(sum(allocated_rh_mw), 2) AS vnf_rh_mw,
-        count(*) FILTER (WHERE is_dark) AS vnf_dark_days,
-        round(sum(allocated_rh_mw) FILTER (WHERE is_dark), 2) AS vnf_dark_rh_mw
-    FROM flaring.lease_allocation GROUP BY 1, 2, 3
-),
-permit_days AS (
-    SELECT lease_district, lease_number, month, days_in_month,
-        count(DISTINCT covered_day) AS covered_days
-    FROM (
-        SELECT plm.lease_district, plm.lease_number, m.month,
-            dayofmonth(m.month + INTERVAL 1 MONTH - INTERVAL 1 DAY) AS days_in_month,
-            UNNEST(generate_series(
-                GREATEST(p.effective_dt, m.month),
-                LEAST(p.expiration_dt, (m.month + INTERVAL 1 MONTH - INTERVAL 1 DAY)::DATE),
-                INTERVAL 1 DAY
-            ))::DATE AS covered_day
-        FROM rrc.permit_leases plm
-        JOIN rrc.permits p ON p.filing_no = plm.filing_no
-        CROSS JOIN months m
-        WHERE p.status IN ('Approved', 'Submitted', 'Hearing Pending', 'Resubmitted')
-          AND p.effective_dt <= (m.month + INTERVAL 1 MONTH - INTERVAL 1 DAY)::DATE
-          AND p.expiration_dt >= m.month
-          AND GREATEST(p.effective_dt, m.month)
-              <= LEAST(p.expiration_dt, (m.month + INTERVAL 1 MONTH - INTERVAL 1 DAY)::DATE)
-    ) GROUP BY 1, 2, 3, 4
-)
-SELECT
-    COALESCE(r.lease_district, v.lease_district) AS lease_district,
-    COALESCE(r.lease_number, v.lease_number) AS lease_number,
-    COALESCE(r.month, v.month) AS month,
-    r.operator_name, r.lease_name,
-    COALESCE(r.total_flared_mcf, 0) AS reported_flared_mcf,
-    COALESCE(v.vnf_detection_days, 0) AS vnf_detection_days,
-    COALESCE(v.vnf_rh_mw, 0) AS vnf_rh_mw,
-    COALESCE(v.vnf_dark_days, 0) AS vnf_dark_days,
-    COALESCE(v.vnf_dark_rh_mw, 0) AS vnf_dark_rh_mw,
-    COALESCE(pd.covered_days * 1.0 / pd.days_in_month, 0) AS permit_coverage,
-    COALESCE(pd.covered_days, 0) AS permit_days,
-    round(COALESCE(r.total_flared_mcf, 0) * (1 - COALESCE(pd.covered_days * 1.0 / pd.days_in_month, 0)), 0) AS unpermitted_flared_mcf
-FROM reported r
-FULL OUTER JOIN vnf v
-    ON v.lease_district = r.lease_district
-    AND LPAD(v.lease_number, 6, '0') = LPAD(r.lease_number, 6, '0')
-    AND v.month = r.month
-LEFT JOIN permit_days pd
-    ON pd.lease_district = COALESCE(r.lease_district, v.lease_district)
-    AND LPAD(pd.lease_number, 6, '0') = LPAD(COALESCE(r.lease_number, v.lease_number), 6, '0')
-    AND pd.month = COALESCE(r.month, v.month);
-
 -- Plume ↔ well matches within 1km (excluding non-upstream facilities)
 CREATE OR REPLACE TABLE flaring.plume_wells AS
 SELECT
@@ -383,15 +261,17 @@ FROM flaring.plumes GROUP BY 1, 2 ORDER BY 1, 2;
 
 CREATE OR REPLACE VIEW flaring.operator_scorecard AS
 WITH vnf AS (
-    SELECT COALESCE(operator_name, 'Unknown') AS operator,
-        count(DISTINCT flare_id) AS vnf_sites,
-        count(*) AS total_detection_days,
-        count(*) FILTER (WHERE is_dark) AS dark_detection_days,
-        round(100.0 * count(*) FILTER (WHERE is_dark) / count(*), 1) AS pct_dark,
-        round(sum(rh_mw), 0) AS total_rh_mw,
-        round(sum(rh_mw) FILTER (WHERE is_dark), 0) AS dark_rh_mw
-    FROM flaring.dark_flares
-    WHERE confidence IN ('sole', 'majority')
+    SELECT COALESCE(so.operator_name, 'Unknown') AS operator,
+        count(DISTINCT fs.flare_id) AS vnf_sites,
+        sum(fs.detection_days) AS total_detection_days,
+        round(sum(d.total_rh_mw), 0) AS total_rh_mw
+    FROM flaring.sites fs
+    LEFT JOIN flaring.site_operators so USING (flare_id)
+    LEFT JOIN (
+        SELECT flare_id, sum(rh_mw) AS total_rh_mw
+        FROM raw.vnf WHERE detected GROUP BY flare_id
+    ) d USING (flare_id)
+    WHERE so.confidence IN ('sole', 'majority')
     GROUP BY 1
 ),
 reported AS (
@@ -401,7 +281,7 @@ reported AS (
         round(100.0 * sum(total_flared_mcf) / NULLIF(sum(total_gas_prod_mcf), 0), 2) AS flare_intensity_pct
     FROM rrc.production
     WHERE district IN ('7B','7C','08','8A')
-      AND year >= (SELECT extract(year FROM min(date)) FROM flaring.dark_flares)
+      AND year >= extract(year FROM getvariable('start_date'))
     GROUP BY 1
 ),
 plumes AS (
@@ -413,8 +293,8 @@ plumes AS (
     GROUP BY 1
 )
 SELECT v.operator,
-    v.vnf_sites, v.total_rh_mw, v.dark_rh_mw, v.pct_dark,
-    v.total_detection_days, v.dark_detection_days,
+    v.vnf_sites, v.total_rh_mw,
+    v.total_detection_days,
     r.reported_bcf, r.produced_bcf, r.flare_intensity_pct,
     p.plume_count, p.plume_total_kg_hr, p.unlit_plumes
 FROM vnf v
