@@ -592,9 +592,9 @@ function operatorInfo(op, firstDetected, lastDetected) {
 function permitCoverageHtml(info) {
     if (!info) return '';
     const coverageLabel = info.covered === true
-        ? '<span class="permit-covered">covered</span>'
+        ? '<span class="permit-covered">Covered</span>'
         : info.covered === false
-            ? '<span class="permit-uncovered">uncovered</span>'
+            ? '<span class="permit-uncovered">Uncovered</span>'
             : null;
     return `
         <div class="detail-row">
