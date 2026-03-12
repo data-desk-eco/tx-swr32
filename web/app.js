@@ -1,5 +1,5 @@
 import * as db from './db.js?v=3';
-import { enhance, cancelEnhance, setUpdateCallback, getState, loadAllCached, getCluster, isEnhancing, setImageStartCallback } from './enhance.js?v=3';
+import { enhance, cancelEnhance, setUpdateCallback, getState, loadAllCached, getCluster, isEnhancing } from './enhance.js?v=3';
 
 const COLORS = {
     flare: '#ffaa44',
@@ -65,7 +65,6 @@ map.on('load', async () => {
     await loadPermits();
     loadCachedS2();
     bindUI();
-    setupS2StatusBar();
     updateMapCentre();
     handleDeepLink();
     // Stats use queryRenderedFeatures — wait for first idle after data loads
@@ -279,34 +278,6 @@ async function loadWells() {
     map.getSource('wells').setData(data);
 }
 
-function setupS2StatusBar() {
-    const bar = document.createElement('div');
-    bar.id = 's2-status-bar';
-    bar.className = 's2-status-bar hidden';
-    const track = document.createElement('div');
-    track.className = 's2-status-track';
-    bar.appendChild(track);
-    document.body.appendChild(bar);
-
-    setImageStartCallback(id => {
-        bar.classList.remove('hidden');
-        const span = document.createElement('span');
-        span.className = 's2-status-item';
-        span.textContent = id;
-        track.appendChild(span);
-        // Keep items reasonable
-        while (track.children.length > 100) track.removeChild(track.firstChild);
-    });
-}
-
-function updateS2StatusBar() {
-    const bar = document.getElementById('s2-status-bar');
-    if (bar && !isEnhancing()) {
-        bar.classList.add('hidden');
-        const track = bar.querySelector('.s2-status-track');
-        if (track) track.innerHTML = '';
-    }
-}
 
 function loadCachedS2() {
     const clusters = loadAllCached(); // also rebuilds clusterIndex
@@ -848,7 +819,6 @@ function showEnhanceDetail(feature) {
 
     // Wire up live updates before starting (cache path fires synchronously)
     setUpdateCallback((s) => {
-        updateS2StatusBar();
         const s2b = document.getElementById('s2-badge');
         if (!s2b) return;
 
