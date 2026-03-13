@@ -1348,21 +1348,28 @@ function renderLeaseChartIn(container, monthly) {
     const startD = new Date(minDate), endD = new Date(maxDate);
     const firstYear = startD.getFullYear(), lastYear = endD.getFullYear();
 
-    // Year gridlines
+    // Year gridlines — track positions to avoid overlapping end labels
+    const charW = 6, minGap = 30;
+    let firstYearX = Infinity, lastYearX = -Infinity;
     for (let y = firstYear + 1; y <= lastYear; y++) {
         const jan = new Date(y, 0, 1).getTime();
         if (jan <= minDate || jan >= maxDate) continue;
         const x = xOf(jan);
+        if (x < firstYearX) firstYearX = x;
+        if (x > lastYearX) lastYearX = x;
         svg += `<line x1="${x}" y1="${M.top}" x2="${x}" y2="${chartH - M.bottom}" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>`;
-        svg += `<text x="${x}" y="${chartH - 1}" fill="rgba(255,255,255,0.3)" font-size="10" text-anchor="middle">${y}</text>`;
+        svg += `<text x="${x}" y="${chartH - 1}" fill="rgba(255,255,255,0.3)" font-size="11" text-anchor="middle">${y}</text>`;
     }
 
-    // Always show start and end date labels
+    // Start/end date labels — skip if too close to a year gridline label
     const fmtLabel = d => `${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
     const startLabel = fmtLabel(startD), endLabel = fmtLabel(endD);
-    svg += `<text x="${M.left}" y="${chartH - 1}" fill="rgba(255,255,255,0.3)" font-size="9" text-anchor="start">${startLabel}</text>`;
-    if (endLabel !== startLabel)
-        svg += `<text x="${width - M.right}" y="${chartH - 1}" fill="rgba(255,255,255,0.3)" font-size="9" text-anchor="end">${endLabel}</text>`;
+    const startLabelEnd = M.left + startLabel.length * charW;
+    const endLabelStart = (width - M.right) - endLabel.length * charW;
+    if (startLabelEnd + minGap < firstYearX)
+        svg += `<text x="${M.left}" y="${chartH - 1}" fill="rgba(255,255,255,0.3)" font-size="11" text-anchor="start">${startLabel}</text>`;
+    if (endLabel !== startLabel && endLabelStart - minGap > lastYearX)
+        svg += `<text x="${width - M.right}" y="${chartH - 1}" fill="rgba(255,255,255,0.3)" font-size="11" text-anchor="end">${endLabel}</text>`;
 
     const prodPoints = monthly.map(d => {
         const x = xOf(new Date(d.date).getTime());
