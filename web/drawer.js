@@ -3,6 +3,7 @@ const LAYERS = {
     permits: { label: 'Permits', color: '#00ccff', latCol: 'latitude',  lonCol: 'longitude',  idCol: null },
     plumes:  { label: 'Plumes',  color: '#ff44ff', latCol: 'latitude',  lonCol: 'longitude',  idCol: 'plume_id' },
     wells:   { label: 'Wells',   color: 'rgba(220,220,230,0.8)', latCol: 'latitude', lonCol: 'longitude', idCol: 'api' },
+    leases:  { label: 'Leases',  color: '#44cc88', latCol: 'lat',       lonCol: 'lon',       idCol: null },
 };
 
 const MIN_WIDTH = 300;
@@ -393,7 +394,9 @@ function renderTable(data, totalCount) {
 function getRowId(row, table) {
     const info = LAYERS[table];
     if (info.idCol) return String(row[info.idCol]);
-    return `${row.latitude}_${row.longitude}_${row.name}`;
+    const lat = row.latitude ?? row.lat;
+    const lon = row.longitude ?? row.lon;
+    return `${lat}_${lon}_${row.name ?? row.operator ?? ''}`;
 }
 
 export function highlight(layerType, id) {

@@ -116,25 +116,50 @@ COPY (
         AND LPAD(lp.lease_number, 6, '0') = LPAD(sl.lease_number, 6, '0')
 ) TO 'web/data/leases.parquet' (FORMAT PARQUET, COMPRESSION ZSTD);
 
--- Lease footprints parquet (polygons with flaring volumes for map layer)
--- Only includes leases that report flaring; geometry simplified for web display
+-- Lease footprints parquet (merged by surface area to avoid opacity stacking)
+-- Vertically stacked leases share the same OTLS survey abstracts but have different
+-- lease numbers (depth intervals). Group by (district, abstract set) to flatten them
+-- into one polygon per unique surface area, averaging flaring intensity across stacks.
 COPY (
-    SELECT
-        l.lease_district, l.lease_number, l.oil_gas_code, l.well_count,
-        l.survey_count,
-        lp.operator_name, lp.lease_name,
-        round(lp.total_flared_mcf, 0)::INT AS total_flared_mcf,
-        round(lp.total_gas_prod_mcf, 0)::INT AS total_gas_prod_mcf,
-        CASE WHEN lp.total_gas_prod_mcf > 0
-             THEN round(100.0 * lp.total_flared_mcf / lp.total_gas_prod_mcf, 1)
+    WITH lease_abstracts AS (
+        SELECT ws.lease_district, ws.lease_number,
+            list(DISTINCT ws.abstract_n ORDER BY ws.abstract_n) AS abstracts
+        FROM rrc.well_surveys ws
+        GROUP BY 1, 2
+    ),
+    surface_groups AS (
+        SELECT la.lease_district, la.abstracts,
+            ST_Union_Agg(l.geom) AS geom,
+            COUNT(*) AS lease_count,
+            SUM(lp.total_flared_mcf) AS total_flared,
+            SUM(lp.total_gas_prod_mcf) AS total_produced,
+            list({
+                d: la.lease_district,
+                n: la.lease_number,
+                name: lp.lease_name,
+                op: lp.operator_name,
+                wells: l.well_count,
+                flared: round(lp.total_flared_mcf, 0)::INT,
+                produced: round(lp.total_gas_prod_mcf, 0)::INT
+            } ORDER BY lp.total_flared_mcf DESC) AS leases
+        FROM lease_abstracts la
+        JOIN rrc.leases l
+            ON l.lease_district = la.lease_district
+            AND l.lease_number = la.lease_number
+        JOIN lease_production lp
+            ON lp.district = la.lease_district
+            AND LPAD(lp.lease_number, 6, '0') = LPAD(la.lease_number, 6, '0')
+        WHERE la.lease_district IN ('6E','7B','7C','08','8A')
+            AND lp.total_flared_mcf > 0
+        GROUP BY la.lease_district, la.abstracts
+    )
+    SELECT lease_count,
+        CASE WHEN total_produced > 0
+             THEN round(100.0 * total_flared / total_produced, 1)
              ELSE NULL END AS flaring_intensity_pct,
-        ST_AsGeoJSON(ST_Simplify(l.geom, 0.001)) AS geometry
-    FROM rrc.leases l
-    JOIN lease_production lp
-        ON lp.district = l.lease_district
-        AND LPAD(lp.lease_number, 6, '0') = LPAD(l.lease_number, 6, '0')
-    WHERE l.lease_district IN ('6E','7B','7C','08','8A')
-      AND lp.total_flared_mcf > 0
+        to_json(leases)::VARCHAR AS leases,
+        ST_AsGeoJSON(ST_Simplify(geom, 0.001)) AS geometry
+    FROM surface_groups
 ) TO 'web/data/lease_footprints.parquet' (FORMAT PARQUET, COMPRESSION ZSTD);
 
 -- Lease monthly production time series (for sparklines in lease detail)

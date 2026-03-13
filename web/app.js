@@ -364,6 +364,27 @@ async function loadLeases() {
     if (!layerState.leases) return;
     const data = await db.queryLeaseFootprints();
     map.getSource('leases').setData(data);
+    // Flatten properties for the drawer table
+    const drawerFeatures = data.features.map(f => {
+        const leases = JSON.parse(f.properties.leases);
+        const totalFlared = leases.reduce((s, l) => s + (l.flared || 0), 0);
+        const totalProduced = leases.reduce((s, l) => s + (l.produced || 0), 0);
+        // Centroid from exterior ring
+        const coords = f.geometry.type === 'Polygon' ? f.geometry.coordinates[0] :
+            f.geometry.type === 'MultiPolygon' ? f.geometry.coordinates[0][0] : [];
+        const [lonSum, latSum] = coords.reduce((a, c) => [a[0] + c[0], a[1] + c[1]], [0, 0]);
+        const n = coords.length || 1;
+        return { properties: {
+            operator: leases[0]?.op || 'N/A',
+            leases: leases.length,
+            flared_mcf: Math.round(totalFlared),
+            produced_mcf: Math.round(totalProduced),
+            intensity_pct: totalProduced > 0 ? Math.round(1000 * totalFlared / totalProduced) / 10 : null,
+            lat: Math.round(latSum / n * 10000) / 10000,
+            lon: Math.round(lonSum / n * 10000) / 10000,
+        }};
+    });
+    drawer.setData('leases', drawerFeatures);
 }
 
 async function loadWells() {
@@ -1016,46 +1037,48 @@ function showPermitDetail(feature) {
 
 function showLeaseDetail(feature) {
     const p = feature.properties;
-    const flared = Number(p.total_flared_mcf) || 0;
-    const produced = Number(p.total_gas_prod_mcf) || 0;
-    const intensity = p.flaring_intensity_pct != null ? Number(p.flaring_intensity_pct).toFixed(1) + '%' : 'N/A';
-    const name = p.lease_name || `${p.lease_district}-${p.lease_number}`;
-    // Centroid for coordinates display
+    const leases = JSON.parse(p.leases);
+    const leaseCount = leases.length;
+    const title = leaseCount > 1 ? `${leaseCount} stacked leases` : (leases[0].name || `${leases[0].d}-${leases[0].n}`);
     const coords = feature.geometry.type === 'Polygon' ? feature.geometry.coordinates[0] :
         feature.geometry.type === 'MultiPolygon' ? feature.geometry.coordinates[0][0] : [];
     const centroid = coords.length > 0
         ? coords.reduce((acc, c) => [acc[0] + c[0], acc[1] + c[1]], [0, 0]).map(v => v / coords.length)
         : [0, 0];
-    openDetail(name, centroid[1], centroid[0], `
-        <div class="stats-grid">
-            <div class="stat"><div class="stat-big">${intensity}</div><div class="stat-unit">flaring intensity</div></div>
-            <div class="stat"><div class="stat-big">${num(p.well_count)}</div><div class="stat-unit">wells</div></div>
-        </div>
-        <div class="detail-row">
-            ${field('Operator', p.operator_name || 'N/A')}
-            ${field('District', p.lease_district || 'N/A')}
-            ${field('Lease no.', p.lease_number || 'N/A')}
-            ${field('Type', p.oil_gas_code === 'O' ? 'Oil' : p.oil_gas_code === 'G' ? 'Gas' : p.oil_gas_code || 'N/A')}
-            ${field('Surveys', num(p.survey_count))}
-        </div>
-        <div class="detail-row">
-            ${field('Gas flared (MCF)', flared > 0 ? flared.toLocaleString() : 'None reported')}
-            ${field('Gas produced (MCF)', produced > 0 ? produced.toLocaleString() : 'None reported')}
-        </div>
-        <div id="lease-dates-section"></div>
-    `);
 
-    // Load monthly time series for sparkline
-    db.queryLeaseMonthly(p.lease_district, p.lease_number).then(monthly => {
-        const datesEl = $('lease-dates-section');
-        if (!datesEl || monthly.length === 0) return;
-        const first = monthly[0].date, last = monthly[monthly.length - 1].date;
-        datesEl.innerHTML = '<div class="detail-row">' +
-            field('Period', `${formatDate(first)} – ${formatDate(last)}`) +
-            field('Months reported', monthly.length.toLocaleString()) +
-            '</div>';
-        renderLeaseChart(monthly);
-    }).catch(() => {});
+    const leaseCards = leases.map((l, i) => {
+        const flared = Number(l.flared) || 0;
+        const produced = Number(l.produced) || 0;
+        const intensity = produced > 0 ? (100 * flared / produced).toFixed(1) + '%' : 'N/A';
+        const name = l.name || `${l.d}-${l.n}`;
+        return `
+            <div class="lease-card">
+                <div class="lease-card-header">${name}</div>
+                <div class="detail-row">
+                    ${field('Operator', l.op || 'N/A')}
+                    ${field('District', l.d)}
+                    ${field('Lease no.', l.n)}
+                    ${field('Wells', num(l.wells))}
+                </div>
+                <div class="detail-row">
+                    ${field('Gas flared (MCF)', flared > 0 ? flared.toLocaleString() : 'None reported')}
+                    ${field('Gas produced (MCF)', produced > 0 ? produced.toLocaleString() : 'None reported')}
+                    ${field('Flaring intensity', intensity)}
+                </div>
+                <div id="lease-chart-${i}" class="intensity-chart"></div>
+            </div>`;
+    }).join('');
+
+    openDetail(title, centroid[1], centroid[0], leaseCards);
+
+    // Load monthly charts for each lease
+    leases.forEach((l, i) => {
+        db.queryLeaseMonthly(l.d, l.n).then(monthly => {
+            const el = document.getElementById(`lease-chart-${i}`);
+            if (!el || monthly.length === 0) return;
+            renderLeaseChartIn(el, monthly);
+        }).catch(() => {});
+    });
 }
 
 function plumeUrl(source, id) {
@@ -1330,8 +1353,7 @@ function renderSparkline(detections) {
     });
 }
 
-function renderLeaseChart(monthly) {
-    const container = $('intensity-chart');
+function renderLeaseChartIn(container, monthly) {
     if (!monthly?.length) { container.innerHTML = ''; return; }
 
     const M = { top: 4, right: 8, bottom: 14, left: 8 };
@@ -1351,7 +1373,6 @@ function renderLeaseChart(monthly) {
     let svg = `<svg viewBox="0 0 ${width} ${height}">`;
     svg += `<line x1="${M.left}" y1="${chartH - M.bottom}" x2="${width - M.right}" y2="${chartH - M.bottom}" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>`;
 
-    // Year gridlines with labels
     const firstYear = new Date(minDate).getFullYear(), lastYear = new Date(maxDate).getFullYear();
     for (let y = firstYear; y <= lastYear; y++) {
         const jan = new Date(y, 0, 1).getTime();
@@ -1361,7 +1382,6 @@ function renderLeaseChart(monthly) {
         svg += `<text x="${x}" y="${chartH - 1}" fill="rgba(255,255,255,0.3)" font-size="10" text-anchor="middle">${y}</text>`;
     }
 
-    // Production area (filled, muted)
     const prodPoints = monthly.map(d => {
         const x = xOf(new Date(d.date).getTime());
         return `${x},${yOf(d.produced_mcf || 0)}`;
@@ -1370,7 +1390,6 @@ function renderLeaseChart(monthly) {
     svg += `<polygon points="${prodPoints.join(' ')} ${baseline}" fill="rgba(255,255,255,0.08)"/>`;
     svg += `<polyline points="${prodPoints.join(' ')}" fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="1"/>`;
 
-    // Flared area (filled, colored)
     const flaredPoints = monthly.map(d => {
         const x = xOf(new Date(d.date).getTime());
         return `${x},${yOf(d.flared_mcf || 0)}`;
@@ -1378,7 +1397,6 @@ function renderLeaseChart(monthly) {
     svg += `<polygon points="${flaredPoints.join(' ')} ${baseline}" fill="rgba(255,100,50,0.2)"/>`;
     svg += `<polyline points="${flaredPoints.join(' ')}" fill="none" stroke="${COLORS.flare}" stroke-width="1.5"/>`;
 
-    // Legend (below chart)
     const legendY = chartH + 14;
     const mid = width / 2;
     svg += `<line x1="${mid - 68}" y1="${legendY - 3}" x2="${mid - 56}" y2="${legendY - 3}" stroke="${COLORS.flare}" stroke-width="2"/>`;
@@ -1388,6 +1406,10 @@ function renderLeaseChart(monthly) {
 
     svg += '</svg>';
     container.innerHTML = svg;
+}
+
+function renderLeaseChart(monthly) {
+    renderLeaseChartIn($('intensity-chart'), monthly);
 }
 
 function num(v) {

@@ -267,6 +267,9 @@ html, body { width: 100%; height: 100%; font-family: 'Inter', -apple-system, Bli
 
 .detail-row { padding: 10px 16px; border-bottom: 1px solid var(--border-subtle); }
 .detail-row:last-child { border-bottom: none; padding-bottom: 16px; }
+.lease-card { border-bottom: 2px solid var(--border-light); }
+.lease-card:last-child { border-bottom: none; }
+.lease-card-header { padding: 10px 16px 2px; font-size: var(--font-sm); font-weight: 500; color: var(--color-lease); }
 .detail-field { display: flex; justify-content: space-between; font-size: var(--font-sm); margin-bottom: 4px; }
 .detail-field:last-child { margin-bottom: 0; }
 .detail-field-label { color: var(--text-faint); flex-shrink: 0; margin-right: 8px; }

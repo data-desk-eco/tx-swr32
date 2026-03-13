@@ -215,10 +215,7 @@ export async function queryLeaseMonthly(leaseDistrict, leaseNumber) {
 
 export async function queryLeaseFootprints() {
     const result = await query(`
-        SELECT lease_district, lease_number, oil_gas_code, well_count,
-            survey_count, operator_name, lease_name,
-            total_flared_mcf, total_gas_prod_mcf, flaring_intensity_pct,
-            geometry
+        SELECT lease_count, flaring_intensity_pct, leases, geometry
         FROM 'lease_footprints.parquet'
     `);
     const data = rows(result);
