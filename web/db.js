@@ -1,6 +1,32 @@
 let db = null;
 let conn = null;
 let _initPromise = null;
+const _loaded = new Set();
+const _loading = new Map();
+
+// Tier 0: needed for first paint (37K flares)
+// Tier 1: visible layers loaded right after first paint (198K + 165K)
+// Tier 2: deferred until first query (7MB wells, 670K detections, 42K leases, 2.9MB lease_monthly)
+const TIER0 = ['flares'];
+const TIER1 = ['permits', 'plumes'];
+
+async function _loadParquet(name) {
+    if (_loaded.has(name)) return;
+    if (_loading.has(name)) return _loading.get(name);
+    const p = (async () => {
+        const resp = await fetch(`data/${name}.parquet`);
+        const buf = await resp.arrayBuffer();
+        await db.registerFileBuffer(`${name}.parquet`, new Uint8Array(buf));
+        _loaded.add(name);
+    })();
+    _loading.set(name, p);
+    return p;
+}
+
+// Ensure a parquet is loaded before querying it — no-ops if already loaded
+async function need(...names) {
+    await Promise.all(names.map(n => _loadParquet(n)));
+}
 
 export async function init() {
     if (_initPromise) return _initPromise;
@@ -18,13 +44,13 @@ async function _init() {
     db = new duckdb.AsyncDuckDB({ log: () => {} }, worker);
     await db.instantiate(mainModule);
     conn = await db.connect();
+    // Only load tier 0 — flares paint immediately
+    await Promise.all(TIER0.map(n => _loadParquet(n)));
+}
 
-    const files = ['flares', 'leases', 'permits', 'plumes', 'detections', 'wells', 'lease_monthly'];
-    await Promise.all(files.map(async name => {
-        const resp = await fetch(`data/${name}.parquet`);
-        const buf = await resp.arrayBuffer();
-        await db.registerFileBuffer(`${name}.parquet`, new Uint8Array(buf));
-    }));
+// Load tier 1 files in background (call after first paint)
+export function loadTier1() {
+    TIER1.forEach(n => _loadParquet(n));
 }
 
 function bboxDeltas(lat, radiusKm) {
@@ -46,6 +72,7 @@ export async function buildOperatorIndex() {
 }
 
 async function _buildOperatorIndex() {
+    await need('permits', 'wells');
     // Pre-compute operator attribution for all flares (permits+wells scoring)
     await conn.query(`
         CREATE TABLE IF NOT EXISTS flare_operators AS
@@ -181,6 +208,7 @@ export async function queryFlares({ operator } = {}) {
 }
 
 export async function queryDetections(flareId) {
+    await need('detections');
     const result = await query(`
         SELECT date, rh_mw
         FROM 'detections.parquet'
@@ -191,6 +219,7 @@ export async function queryDetections(flareId) {
 }
 
 export async function queryLeases(flareId) {
+    await need('leases');
     const result = await query(`
         SELECT lease_district, lease_number, oil_gas_code, well_count,
             reported_flared_mcf, lease_operator, lease_name
@@ -201,6 +230,7 @@ export async function queryLeases(flareId) {
 }
 
 export async function queryLeaseMonthly(leaseDistrict, leaseNumber) {
+    await need('lease_monthly');
     const ld = leaseDistrict.replace(/'/g, "''");
     const ln = String(leaseNumber).replace(/'/g, "''");
     const result = await query(`
@@ -214,6 +244,7 @@ export async function queryLeaseMonthly(leaseDistrict, leaseNumber) {
 }
 
 export async function queryPermits({ operator } = {}) {
+    await need('permits');
     let where = 'WHERE latitude IS NOT NULL AND longitude IS NOT NULL';
     if (operator) where += ` AND lower(operator_name) LIKE '%${operator.toLowerCase().replace(/'/g, "''")}%'`;
     const result = await query(`
@@ -240,6 +271,7 @@ export async function queryPermits({ operator } = {}) {
 }
 
 export async function queryPermitFilings(lat, lon, { radiusKm = 0.375, name, operator } = {}) {
+    await need('permits');
     const { dLat, dLon } = bboxDeltas(lat, radiusKm);
     let where = `latitude BETWEEN ${lat - dLat} AND ${lat + dLat}
           AND longitude BETWEEN ${lon - dLon} AND ${lon + dLon}
@@ -280,6 +312,7 @@ export async function queryOperator(flareId, lat, lon) {
 }
 
 export async function queryOperatorByLocation(lat, lon) {
+    await need('permits', 'wells');
     const { dLat, dLon } = bboxDeltas(lat, 0.375);
     const result = await query(`
         WITH permit_ops AS (
@@ -364,6 +397,7 @@ export async function queryOperatorByLocation(lat, lon) {
 }
 
 export async function queryNearbyPermits(lat, lon, radiusKm = 0.75) {
+    await need('permits');
     const { dLat, dLon } = bboxDeltas(lat, radiusKm);
     const result = await query(`
         SELECT name, operator_name, district, county, release_type,
@@ -376,6 +410,7 @@ export async function queryNearbyPermits(lat, lon, radiusKm = 0.75) {
 }
 
 export async function queryNearestPermit(lat, lon, radiusKm = 0.375) {
+    await need('permits');
     const { dLat, dLon } = bboxDeltas(lat, radiusKm);
     const result = await query(`
         SELECT name, operator_name, district, county, release_type,
@@ -396,6 +431,7 @@ export async function queryNearestPermit(lat, lon, radiusKm = 0.375) {
 }
 
 export async function queryPlumes() {
+    await need('plumes');
     const result = await query(`
         SELECT plume_id, latitude, longitude, source, satellite,
             CAST(date AS VARCHAR) AS date,
@@ -414,6 +450,7 @@ export async function queryPlumes() {
 }
 
 export async function queryWells({ operator, bounds } = {}) {
+    await need('wells');
     const conditions = [];
     if (bounds) {
         conditions.push(`latitude BETWEEN ${bounds.south} AND ${bounds.north}`);

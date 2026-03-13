@@ -1,4 +1,4 @@
-import * as db from './db.js?v=6';
+import * as db from './db.js?v=7';
 import { enhance, cancelEnhance, setUpdateCallback, getState, loadAllCached, getCluster, isEnhancing } from './enhance.js?v=4';
 import * as drawer from './drawer.js?v=2';
 import { searchSTAC } from './vendor/s2-flares/stac.js';
@@ -86,15 +86,20 @@ const map = new maplibregl.Map({
 });
 
 
+// Start DuckDB init immediately — runs in parallel with map tile loading
+const dbReady = db.init();
+
 map.on('load', async () => {
     $('stat-sites').textContent = 'Loading...';
 
-    await db.init();
+    await dbReady;
 
     addEmptySources();
     addLayers();
     bindUI();
     await refreshFlares();
+    // Tier 1: start loading permits + plumes in background
+    db.loadTier1();
     await loadPermits();
     loadCachedS2();
     updateMapCentre();

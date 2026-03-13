@@ -66,6 +66,7 @@ function createDOM() {
 
     handleEl = document.createElement('div');
     handleEl.id = 'drawer-handle';
+    handleEl.innerHTML = '<div class="handle-bar"></div><div class="handle-label">Data layer</div>';
 
     document.body.appendChild(drawerEl);
     document.body.appendChild(handleEl);
@@ -90,6 +91,16 @@ function bindDrag() {
     let startWidth = 0;
     let dragging = false;
 
+    // Pre-render table on hover so data is ready before drag starts
+    let preloaded = false;
+    handleEl.addEventListener('pointerenter', () => {
+        if (preloaded || drawerWidth >= MIN_WIDTH) return;
+        preloaded = true;
+        if (!activeTab) activateFirstTab();
+        refreshTable();
+    });
+    handleEl.addEventListener('pointerleave', () => { preloaded = false; });
+
     handleEl.addEventListener('pointerdown', e => {
         e.preventDefault();
         handleEl.setPointerCapture(e.pointerId);
@@ -101,16 +112,27 @@ function bindDrag() {
         if (!activeTab) activateFirstTab();
     });
 
+    let refreshRAF = null;
+
     handleEl.addEventListener('pointermove', e => {
         if (!dragging) return;
         const maxW = window.innerWidth - 400;
         const newW = Math.max(0, Math.min(maxW, startWidth + (e.clientX - startX)));
         setDrawerWidth(newW);
+
+        // Live-render table while dragging, throttled to one per frame
+        if (newW >= MIN_WIDTH && !refreshRAF) {
+            refreshRAF = requestAnimationFrame(() => {
+                refreshRAF = null;
+                refreshTable();
+            });
+        }
     });
 
     const endDrag = () => {
         if (!dragging) return;
         dragging = false;
+        if (refreshRAF) { cancelAnimationFrame(refreshRAF); refreshRAF = null; }
         drawerEl.style.transition = 'width 0.2s';
 
         if (drawerWidth > 0 && drawerWidth < MIN_WIDTH) {

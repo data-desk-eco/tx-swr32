@@ -303,11 +303,22 @@ html, body { width: 100%; height: 100%; font-family: 'Inter', -apple-system, Bli
 
 #drawer-handle {
     position: fixed; left: 0; top: 50%; transform: translateY(-50%);
-    width: 6px; height: 48px;
-    background: rgba(255,255,255,0.15); cursor: col-resize;
+    display: flex; align-items: stretch; gap: 0;
+    cursor: col-resize;
     z-index: 6; transition: background 0.15s;
 }
-#drawer-handle:hover { background: rgba(255,255,255,0.3); }
+#drawer-handle .handle-bar {
+    width: 6px;
+    background: rgba(255,255,255,0.15); transition: background 0.15s;
+}
+#drawer-handle:hover .handle-bar { background: rgba(255,255,255,0.3); }
+#drawer-handle .handle-label {
+    writing-mode: vertical-rl; text-orientation: mixed;
+    font: 600 11px/1 var(--font-sans, system-ui, sans-serif);
+    letter-spacing: 0.05em;
+    color: rgba(255,255,255,0.6); white-space: nowrap;
+    padding: 0 4px 0 3px; user-select: none;
+}
 
 .drawer-tab-bar {
     display: flex; border-bottom: 1px solid var(--border-subtle);
