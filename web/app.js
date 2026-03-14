@@ -143,6 +143,7 @@ function addEmptySources() {
     map.addSource('wells', { type: 'geojson', data: empty });
     map.addSource('flare-pixels', { type: 'geojson', data: empty });
     map.addSource('s2-detections', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+    map.addSource('selection-halo', { type: 'geojson', data: empty });
 }
 
 function addWellImage() {
@@ -311,6 +312,20 @@ function addLayers() {
             'circle-opacity': 0.25,
             'circle-stroke-width': 1.5,
             'circle-stroke-color': s2ColorRamp,
+        },
+    });
+
+    // Selection halo — pulsing glow around currently selected feature
+    map.addLayer({
+        id: 'selection-halo',
+        type: 'circle',
+        source: 'selection-halo',
+        paint: {
+            'circle-radius': 18,
+            'circle-color': 'transparent',
+            'circle-stroke-width': 2,
+            'circle-stroke-color': 'rgba(255, 255, 255, 0.6)',
+            'circle-blur': 0.8,
         },
     });
 }
@@ -651,12 +666,50 @@ function removeS2Badge() {
     if (badge) { badge.id = 'detail-badge'; badge.classList.add('hidden'); }
 }
 
+// ---------------------------------------------------------------------------
+// Selection visual state — dims map, fades other points, shows halo
+// ---------------------------------------------------------------------------
+function activateSelection(lon, lat) {
+    // Dim overlay
+    $('map-dim-overlay').classList.add('active');
+    // Fade point layers
+    if (map.getLayer('flares-layer')) {
+        map.setPaintProperty('flares-layer', 'circle-stroke-opacity', 0.3);
+        map.setPaintProperty('flares-layer', 'circle-opacity', 0.1);
+    }
+    if (map.getLayer('permits-layer')) map.setPaintProperty('permits-layer', 'circle-stroke-opacity', 0.3);
+    if (map.getLayer('plumes-layer')) map.setPaintProperty('plumes-layer', 'circle-stroke-opacity', 0.3);
+    if (map.getLayer('wells-layer')) map.setPaintProperty('wells-layer', 'icon-opacity', 0.3);
+    if (map.getLayer('s2-points')) map.setPaintProperty('s2-points', 'circle-stroke-opacity', 0.3);
+    if (map.getLayer('flare-pixels-layer')) map.setPaintProperty('flare-pixels-layer', 'line-opacity', 0.3);
+    // Halo at selected location
+    map.getSource('selection-halo').setData({
+        type: 'FeatureCollection',
+        features: [{ type: 'Feature', geometry: { type: 'Point', coordinates: [lon, lat] }, properties: {} }],
+    });
+}
+
+function deactivateSelection() {
+    $('map-dim-overlay').classList.remove('active');
+    if (map.getLayer('flares-layer')) {
+        map.setPaintProperty('flares-layer', 'circle-stroke-opacity', ['interpolate', ['linear'], ['zoom'], 13, 1, 15, 0]);
+        map.setPaintProperty('flares-layer', 'circle-opacity', ['interpolate', ['linear'], ['zoom'], 13, 0.25, 15, 0]);
+    }
+    if (map.getLayer('permits-layer')) map.setPaintProperty('permits-layer', 'circle-stroke-opacity', 1);
+    if (map.getLayer('plumes-layer')) map.setPaintProperty('plumes-layer', 'circle-stroke-opacity', 1);
+    if (map.getLayer('wells-layer')) map.setPaintProperty('wells-layer', 'icon-opacity', 0.85);
+    if (map.getLayer('s2-points')) map.setPaintProperty('s2-points', 'circle-stroke-opacity', 1);
+    if (map.getLayer('flare-pixels-layer')) map.setPaintProperty('flare-pixels-layer', 'line-opacity', 1);
+    map.getSource('selection-halo').setData({ type: 'FeatureCollection', features: [] });
+}
+
 function closeDetail() {
     removeS2Badge();
     closeS2Pixels();
     updateFlareUrl(null);
     updateS2Url(null);
     $('detail-panel').classList.add('hidden');
+    deactivateSelection();
     overlappingFeatures = [];
     overlapIndex = 0;
     drawer.highlight(null, null);
@@ -800,6 +853,13 @@ async function loadS2Pixels(det, clusterLon, clusterLat) {
 function showFeatureDetail(feature) {
     removeS2Badge();
     const layer = feature.layer.id;
+
+    // Activate selection visuals (dim + halo)
+    const coords = feature.geometry.type === 'Point'
+        ? feature.geometry.coordinates
+        : [Number(feature.properties.lon || feature.properties.longitude), Number(feature.properties.lat || feature.properties.latitude)];
+    activateSelection(coords[0], coords[1]);
+
     if (layer === 's2-points') {
         // Don't cancel enhance — let it run in background
         const cluster = getCluster(feature.properties.id);
@@ -1098,6 +1158,7 @@ function showWellDetail(feature) {
 function showEnhanceDetail(feature) {
     const p = feature.properties;
     updateFlareUrl(p.flare_id, 's2');
+    activateSelection(Number(p.lon), Number(p.lat));
 
     openDetail(`Sentinel-2 · Flare ${p.flare_id}`, p.lat, p.lon, `
         <div id="s2-stop-section">
@@ -1167,6 +1228,7 @@ function showEnhanceDetail(feature) {
 function showS2ClusterDetail(cluster) {
     closeS2Pixels();
     updateS2Url(cluster.id);
+    activateSelection(cluster.lon, cluster.lat);
 
     // Build detection event list (sorted newest first)
     const dets = (cluster.detections || []).slice().sort((a, b) => b.date.localeCompare(a.date));
