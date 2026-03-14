@@ -7,7 +7,7 @@ and methane plume observations.
   VIIRS Nightfire (satellite flares)
   + Sentinel-2 (20m resolution imagery)
   + SWR 32 exception permits (Texas RRC)
-  + RRC well locations (EBCDIC bulk files)
+  + Oil/gas well locations (RRC EBCDIC bulk files)
   + OTLS survey polygons (lease boundaries)
   + Carbon Mapper / IMEO methane plumes
   ─────────────────────────────────────

@@ -588,6 +588,12 @@ function bindUI() {
         );
         const raw = map.queryRenderedFeatures(bbox, { layers: activeLayers });
 
+        // If a feature is already selected, any click deselects — even on another feature
+        if (overlappingFeatures.length > 0) {
+            closeDetail();
+            return;
+        }
+
         if (raw.length === 0) {
             closeDetail();
             return;

@@ -62,8 +62,10 @@ Single-page app with no build step and zero npm dependencies. MapLibre GL and Du
 - **Permian bbox**: 30–33.5°N, 100–104.5°W (applied at export time via `in_permian()` macro). Texas-only: sites above 32°N must be east of -103.064° (TX-NM border) to exclude New Mexico.
 - **Match radius**: 375m (VIIRS M-band pixel radius = 750m / 2). Bounding box pre-filter ±0.0034° (~375m).
 - **VIIRS pixel squares**: 750m squares generated client-side in the web app for visual review of spatial matching.
+- **Selection behaviour**: clicking a feature selects it (dims map, highlights selected + associated features). Clicking anywhere while a feature is selected always deselects first — you can't jump directly from one selection to another.
 - **Deep linking**: all params in the hash alongside MapLibre's map position. `#map=zoom/lat/lon&vnf=ID` opens VNF detail, `#map=…&vnf=ID&mode=s2` starts S2 enhancement, `#map=…&s2=HASH` opens an S2 cluster detail card.
 - **Colors**: defined centrally as CSS custom properties (`--color-flare`, `--color-permit`, `--color-plume`, `--color-well`) in `:root`; JS reads them via `getComputedStyle`. Color ramps for intensity (`b12Color`, `mwColor`) are shared functions in app.js. Wells use the same dark-red→white-hot ramp as flares, driven by a combined intensity×volume score.
+- **Legend order**: Flare sites → Permit locations → Methane plumes → Infrastructure → Oil/gas wells.
 
 ## Commands
 

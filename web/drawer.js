@@ -81,7 +81,7 @@ function createDOM() {
 
     handleEl = document.createElement('div');
     handleEl.id = 'drawer-handle';
-    handleEl.innerHTML = '<div class="handle-bar"></div><div class="handle-label">data tables</div>';
+    handleEl.innerHTML = '<div class="handle-bar"></div><div class="handle-label">data table</div>';
 
     document.body.appendChild(drawerEl);
     document.body.appendChild(handleEl);
