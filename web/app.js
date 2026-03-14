@@ -40,7 +40,9 @@ function openDetail(title, lat, lon, bodyHtml) {
     const panel = $('detail-panel');
     panel.classList.remove('hidden');
     // Mobile scroll arrow: show down arrow when panel has overflow
-    requestAnimationFrame(() => updateScrollArrow(panel));
+    // Double-rAF ensures layout is resolved before measuring overflow
+    panel.scrollTop = 0;
+    requestAnimationFrame(() => requestAnimationFrame(() => updateScrollArrow(panel)));
     panel.onscroll = () => updateScrollArrow(panel);
 }
 
