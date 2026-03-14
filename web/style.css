@@ -397,10 +397,15 @@ html, body { width: 100%; height: 100%; font-family: 'Inter', -apple-system, Bli
         top: auto; bottom: 0; left: 0; right: 0; width: 100%;
         max-height: 45vh; overflow-y: auto;
         border-left: none; border-right: none; border-bottom: none;
-        -webkit-mask-image: linear-gradient(to bottom, #000 85%, transparent 100%);
-        mask-image: linear-gradient(to bottom, #000 85%, transparent 100%);
     }
-    .right-panel .detail-row:last-child { padding-bottom: 32px; }
+    .right-panel.scrollable::after {
+        content: '';
+        position: sticky; bottom: 0; left: 0; right: 0;
+        display: block; height: 24px;
+        background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='10' viewBox='0 0 12 10'%3E%3Cline x1='6' y1='0' x2='6' y2='6' stroke='white' stroke-width='1.5' stroke-linecap='round'/%3E%3Cpolyline points='2.5,4 6,8 9.5,4' fill='none' stroke='white' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center no-repeat,
+            linear-gradient(transparent, var(--bg-panel) 40%);
+        pointer-events: none;
+    }
     .logo { display: none; }
     #drawer-handle { display: none; }
 }

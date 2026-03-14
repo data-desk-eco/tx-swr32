@@ -37,7 +37,16 @@ function openDetail(title, lat, lon, bodyHtml) {
     $('intensity-chart').innerHTML = '';
     removeS2Badge();
     $('detail-body').innerHTML = bodyHtml;
-    $('detail-panel').classList.remove('hidden');
+    const panel = $('detail-panel');
+    panel.classList.remove('hidden');
+    // Mobile scroll arrow: show down arrow when panel has overflow
+    requestAnimationFrame(() => updateScrollArrow(panel));
+    panel.onscroll = () => updateScrollArrow(panel);
+}
+
+function updateScrollArrow(panel) {
+    const hasMore = panel.scrollHeight - panel.scrollTop - panel.clientHeight > 8;
+    panel.classList.toggle('scrollable', hasMore);
 }
 
 let layerState = { flares: true, permits: true, plumes: false, wells: false };
@@ -321,11 +330,11 @@ function addLayers() {
         type: 'circle',
         source: 'selection-halo',
         paint: {
-            'circle-radius': 18,
-            'circle-color': 'transparent',
-            'circle-stroke-width': 2,
-            'circle-stroke-color': 'rgba(255, 255, 255, 0.6)',
-            'circle-blur': 0.8,
+            'circle-radius': 20,
+            'circle-color': 'rgba(255, 255, 255, 0.06)',
+            'circle-stroke-width': 2.5,
+            'circle-stroke-color': 'rgba(255, 255, 255, 0.7)',
+            'circle-blur': 0.6,
         },
     });
 }
@@ -667,21 +676,35 @@ function removeS2Badge() {
 }
 
 // ---------------------------------------------------------------------------
-// Selection visual state — dims map, fades other points, shows halo
+// Selection visual state — dims map, highlights selected + associated features
 // ---------------------------------------------------------------------------
-function activateSelection(lon, lat) {
+function activateSelection(lon, lat, opts = {}) {
+    const { flareId } = opts;
     // Dim overlay
     $('map-dim-overlay').classList.add('active');
-    // Fade point layers
+    // Fade point layers — selected feature and associated S2 detections stay bright
     if (map.getLayer('flares-layer')) {
-        map.setPaintProperty('flares-layer', 'circle-stroke-opacity', 0.3);
-        map.setPaintProperty('flares-layer', 'circle-opacity', 0.1);
+        const strokeOp = flareId != null
+            ? ['case', ['==', ['get', 'flare_id'], flareId], 1, 0.15]
+            : 0.15;
+        const fillOp = flareId != null
+            ? ['case', ['==', ['get', 'flare_id'], flareId], 0.4, 0.05]
+            : 0.05;
+        map.setPaintProperty('flares-layer', 'circle-stroke-opacity', strokeOp);
+        map.setPaintProperty('flares-layer', 'circle-opacity', fillOp);
     }
-    if (map.getLayer('permits-layer')) map.setPaintProperty('permits-layer', 'circle-stroke-opacity', 0.3);
-    if (map.getLayer('plumes-layer')) map.setPaintProperty('plumes-layer', 'circle-stroke-opacity', 0.3);
-    if (map.getLayer('wells-layer')) map.setPaintProperty('wells-layer', 'icon-opacity', 0.3);
-    if (map.getLayer('s2-points')) map.setPaintProperty('s2-points', 'circle-stroke-opacity', 0.3);
-    if (map.getLayer('flare-pixels-layer')) map.setPaintProperty('flare-pixels-layer', 'line-opacity', 0.3);
+    if (map.getLayer('permits-layer')) map.setPaintProperty('permits-layer', 'circle-stroke-opacity', 0.15);
+    if (map.getLayer('plumes-layer')) map.setPaintProperty('plumes-layer', 'circle-stroke-opacity', 0.15);
+    if (map.getLayer('wells-layer')) map.setPaintProperty('wells-layer', 'icon-opacity', 0.15);
+    if (map.getLayer('s2-points')) {
+        const op = flareId != null
+            ? ['case', ['==', ['get', 'flare_id'], flareId], 1, 0.15]
+            : 0.15;
+        map.setPaintProperty('s2-points', 'circle-stroke-opacity', op);
+        map.setPaintProperty('s2-points', 'circle-opacity',
+            flareId != null ? ['case', ['==', ['get', 'flare_id'], flareId], 0.4, 0.05] : 0.05);
+    }
+    if (map.getLayer('flare-pixels-layer')) map.setPaintProperty('flare-pixels-layer', 'line-opacity', 0.15);
     // Halo at selected location
     map.getSource('selection-halo').setData({
         type: 'FeatureCollection',
@@ -698,7 +721,10 @@ function deactivateSelection() {
     if (map.getLayer('permits-layer')) map.setPaintProperty('permits-layer', 'circle-stroke-opacity', 1);
     if (map.getLayer('plumes-layer')) map.setPaintProperty('plumes-layer', 'circle-stroke-opacity', 1);
     if (map.getLayer('wells-layer')) map.setPaintProperty('wells-layer', 'icon-opacity', 0.85);
-    if (map.getLayer('s2-points')) map.setPaintProperty('s2-points', 'circle-stroke-opacity', 1);
+    if (map.getLayer('s2-points')) {
+        map.setPaintProperty('s2-points', 'circle-stroke-opacity', 1);
+        map.setPaintProperty('s2-points', 'circle-opacity', 0.25);
+    }
     if (map.getLayer('flare-pixels-layer')) map.setPaintProperty('flare-pixels-layer', 'line-opacity', 1);
     map.getSource('selection-halo').setData({ type: 'FeatureCollection', features: [] });
 }
@@ -858,7 +884,8 @@ function showFeatureDetail(feature) {
     const coords = feature.geometry.type === 'Point'
         ? feature.geometry.coordinates
         : [Number(feature.properties.lon || feature.properties.longitude), Number(feature.properties.lat || feature.properties.latitude)];
-    activateSelection(coords[0], coords[1]);
+    const flareId = feature.properties.flare_id != null ? feature.properties.flare_id : undefined;
+    activateSelection(coords[0], coords[1], { flareId });
 
     if (layer === 's2-points') {
         // Don't cancel enhance — let it run in background
@@ -1158,7 +1185,7 @@ function showWellDetail(feature) {
 function showEnhanceDetail(feature) {
     const p = feature.properties;
     updateFlareUrl(p.flare_id, 's2');
-    activateSelection(Number(p.lon), Number(p.lat));
+    activateSelection(Number(p.lon), Number(p.lat), { flareId: p.flare_id });
 
     openDetail(`Sentinel-2 · Flare ${p.flare_id}`, p.lat, p.lon, `
         <div id="s2-stop-section">
@@ -1228,7 +1255,7 @@ function showEnhanceDetail(feature) {
 function showS2ClusterDetail(cluster) {
     closeS2Pixels();
     updateS2Url(cluster.id);
-    activateSelection(cluster.lon, cluster.lat);
+    activateSelection(cluster.lon, cluster.lat, { flareId: cluster.flare_id });
 
     // Build detection event list (sorted newest first)
     const dets = (cluster.detections || []).slice().sort((a, b) => b.date.localeCompare(a.date));
