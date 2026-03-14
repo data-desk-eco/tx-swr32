@@ -39,16 +39,7 @@ function openDetail(title, lat, lon, bodyHtml) {
     $('detail-body').innerHTML = bodyHtml;
     const panel = $('detail-panel');
     panel.classList.remove('hidden');
-    // Mobile scroll arrow: show down arrow when panel has overflow
-    // Double-rAF ensures layout is resolved before measuring overflow
     panel.scrollTop = 0;
-    requestAnimationFrame(() => requestAnimationFrame(() => updateScrollArrow(panel)));
-    panel.onscroll = () => updateScrollArrow(panel);
-}
-
-function updateScrollArrow(panel) {
-    const hasMore = panel.scrollHeight - panel.scrollTop - panel.clientHeight > 8;
-    panel.classList.toggle('scrollable', hasMore);
 }
 
 let layerState = { flares: true, permits: true, plumes: false, wells: false };
