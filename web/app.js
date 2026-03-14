@@ -145,7 +145,6 @@ function addEmptySources() {
     map.addSource('wells', { type: 'geojson', data: empty });
     map.addSource('flare-pixels', { type: 'geojson', data: empty });
     map.addSource('s2-detections', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
-    map.addSource('selection-halo', { type: 'geojson', data: empty });
 }
 
 function addWellImage() {
@@ -313,19 +312,6 @@ function addLayers() {
         },
     });
 
-    // Selection halo — pulsing glow around currently selected feature
-    map.addLayer({
-        id: 'selection-halo',
-        type: 'circle',
-        source: 'selection-halo',
-        paint: {
-            'circle-radius': 20,
-            'circle-color': 'rgba(255, 255, 255, 0.06)',
-            'circle-stroke-width': 2.5,
-            'circle-stroke-color': 'rgba(255, 255, 255, 0.7)',
-            'circle-blur': 0.6,
-        },
-    });
 }
 
 function plumeRadius() {
@@ -693,12 +679,6 @@ function activateSelection(lon, lat, opts = {}) {
         map.setPaintProperty('s2-points', 'circle-opacity',
             flareId != null ? ['case', ['==', ['get', 'flare_id'], flareId], 0.4, 0.05] : 0.05);
     }
-    if (map.getLayer('flare-pixels-layer')) map.setPaintProperty('flare-pixels-layer', 'line-opacity', 0.15);
-    // Halo at selected location
-    map.getSource('selection-halo').setData({
-        type: 'FeatureCollection',
-        features: [{ type: 'Feature', geometry: { type: 'Point', coordinates: [lon, lat] }, properties: {} }],
-    });
 }
 
 function deactivateSelection() {
@@ -714,8 +694,6 @@ function deactivateSelection() {
         map.setPaintProperty('s2-points', 'circle-stroke-opacity', 1);
         map.setPaintProperty('s2-points', 'circle-opacity', 0.25);
     }
-    if (map.getLayer('flare-pixels-layer')) map.setPaintProperty('flare-pixels-layer', 'line-opacity', 1);
-    map.getSource('selection-halo').setData({ type: 'FeatureCollection', features: [] });
 }
 
 function closeDetail() {
