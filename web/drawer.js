@@ -1,12 +1,27 @@
+const _css = k => getComputedStyle(document.documentElement).getPropertyValue(k).trim();
+
 const LAYERS = {
-    flares:  { label: 'Flares',  color: '#ffaa44', latCol: 'lat',       lonCol: 'lon',       idCol: 'flare_id' },
-    permits: { label: 'Permits', color: '#00ccff', latCol: 'latitude',  lonCol: 'longitude',  idCol: null },
-    plumes:  { label: 'Plumes',  color: '#ff44ff', latCol: 'latitude',  lonCol: 'longitude',  idCol: 'plume_id' },
-    wells:   { label: 'Wells',   color: 'rgba(220,220,230,0.8)', latCol: 'latitude', lonCol: 'longitude', idCol: 'api' },
+    flares:  { label: 'Flares',  color: () => _css('--color-flare'),  latCol: 'lat',       lonCol: 'lon',       idCol: 'flare_id' },
+    permits: { label: 'Permits', color: () => _css('--color-permit'), latCol: 'latitude',  lonCol: 'longitude',  idCol: null },
+    plumes:  { label: 'Plumes',  color: () => _css('--color-plume'),  latCol: 'latitude',  lonCol: 'longitude',  idCol: 'plume_id' },
+    wells:   { label: 'Wells',   color: () => _css('--color-well'),   latCol: 'latitude', lonCol: 'longitude', idCol: 'api' },
+    infra:   { label: 'Infrastructure', color: () => _css('--color-infra'), latCol: 'latitude', lonCol: 'longitude', idCol: 'serial_number' },
 };
 
 const MIN_WIDTH = 300;
 const MAX_ROWS = 1000;
+
+function resetSelection() {
+    sortCol = null; sortDir = 'ASC'; selectedIdx = -1; selectedId = null;
+}
+
+function rowCoords(row, info) {
+    return [Number(row[info.latCol]), Number(row[info.lonCol])];
+}
+
+function esc(v) {
+    return String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
 
 let map = null;
 let drawerEl = null;
@@ -189,7 +204,7 @@ function bindKeyboard() {
                 const ci = visible.indexOf(activeTab);
                 if (ci > 0) {
                     activeTab = visible[ci - 1];
-                    sortCol = null; sortDir = 'ASC'; selectedIdx = -1; selectedId = null;
+                    resetSelection();
                     updateTabs();
                     refreshTable();
                 }
@@ -201,7 +216,7 @@ function bindKeyboard() {
                 const ci = visible.indexOf(activeTab);
                 if (ci < visible.length - 1) {
                     activeTab = visible[ci + 1];
-                    sortCol = null; sortDir = 'ASC'; selectedIdx = -1; selectedId = null;
+                    resetSelection();
                     updateTabs();
                     refreshTable();
                 }
@@ -211,9 +226,7 @@ function bindKeyboard() {
                 if (selectedIdx >= 0 && selectedIdx < currentRows.length) {
                     e.preventDefault();
                     const row = currentRows[selectedIdx];
-                    const info = LAYERS[activeTab];
-                    const lat = Number(row[info.latCol]);
-                    const lon = Number(row[info.lonCol]);
+                    const [lat, lon] = rowCoords(row, LAYERS[activeTab]);
                     if (onRowClick) onRowClick(activeTab, row);
                     map.flyTo({ center: [lon, lat], zoom: Math.max(map.getZoom(), 13) });
                 }
@@ -264,8 +277,7 @@ function updateTabs() {
 
     if (!activeTab || !visible.includes(activeTab)) {
         activeTab = visible[0];
-        sortCol = null;
-        sortDir = 'ASC';
+        resetSelection();
     }
 
     for (const layer of visible) {
@@ -274,16 +286,13 @@ function updateTabs() {
         tab.className = 'drawer-tab' + (layer === activeTab ? ' active' : '');
         tab.textContent = info.label;
         if (layer === activeTab) {
-            tab.style.color = info.color;
-            tab.style.borderBottomColor = info.color;
+            tab.style.color = info.color();
+            tab.style.borderBottomColor = info.color();
         }
         tab.addEventListener('click', () => {
             if (activeTab === layer) return;
             activeTab = layer;
-            sortCol = null;
-            sortDir = 'ASC';
-            selectedIdx = -1;
-            selectedId = null;
+            resetSelection();
             updateTabs();
             refreshTable();
         });
@@ -295,8 +304,7 @@ function activateFirstTab() {
     const visible = getVisibleLayers();
     if (visible.length > 0) {
         activeTab = visible[0];
-        sortCol = null;
-        sortDir = 'ASC';
+        resetSelection();
         updateTabs();
     }
 }
@@ -312,7 +320,7 @@ function refreshTable() {
 
     // Viewport filter
     let filtered = rows.filter(r => {
-        const lat = Number(r[info.latCol]), lon = Number(r[info.lonCol]);
+        const [lat, lon] = rowCoords(r, info);
         return lat >= south && lat <= north && lon >= west && lon <= east;
     });
 
@@ -364,7 +372,7 @@ function renderTable(data, totalCount) {
         html += `<tr data-idx="${i}"${isSelected ? ' class="selected"' : ''}>`;
         for (const col of cols) {
             const v = row[col];
-            html += `<td>${v == null ? '' : v}</td>`;
+            html += `<td>${v == null ? '' : esc(v)}</td>`;
         }
         html += '</tr>';
     }
@@ -398,9 +406,7 @@ function renderTable(data, totalCount) {
             const row = currentRows[idx];
             if (!row) return;
 
-            const info = LAYERS[activeTab];
-            const lat = Number(row[info.latCol]);
-            const lon = Number(row[info.lonCol]);
+            const [lat, lon] = rowCoords(row, LAYERS[activeTab]);
 
             selectedIdx = idx;
             selectedId = getRowId(row, activeTab);
@@ -432,7 +438,7 @@ export function highlight(layerType, id) {
 
     const tabMap = {
         'flares-layer': 'flares', 'flare-pixels-fill': 'flares', 'flare-pixels-layer': 'flares',
-        'permits-layer': 'permits', 'plumes-layer': 'plumes', 'wells-layer': 'wells',
+        'permits-layer': 'permits', 'plumes-layer': 'plumes', 'wells-layer': 'wells', 'infra-layer': 'infra',
     };
     const tab = tabMap[layerType] || layerType;
 

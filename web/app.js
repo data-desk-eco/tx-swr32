@@ -11,11 +11,14 @@ const COLORS = {
     permit: _css('--color-permit'),
     plume: _css('--color-plume'),
     well: _css('--color-well'),
+    infra: _css('--color-infra'),
 };
 
 // Geo constants
 const LAT_PER_M = 1 / 110540;
-const lonPerM = lat => 1 / (111320 * Math.cos(lat * Math.PI / 180));
+const LON_PER_M = lat => 1 / (111320 * Math.cos(lat * Math.PI / 180));
+
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 // Color ramps
 function b12Color(b) {
@@ -31,18 +34,20 @@ function fmtCoords(lat, lon) {
 
 // DOM cache for detail panel
 const $ = id => document.getElementById(id);
-function openDetail(title, lat, lon, bodyHtml) {
+function openDetail(title, lat, lon, body) {
     $('detail-title').textContent = title;
     $('detail-coords').textContent = fmtCoords(lat, lon);
     $('intensity-chart').innerHTML = '';
     removeS2Badge();
-    $('detail-body').innerHTML = bodyHtml;
+    $('detail-body').innerHTML = Array.isArray(body)
+        ? body.flat(Infinity).filter(Boolean).join('')
+        : body;
     const panel = $('detail-panel');
     panel.classList.remove('hidden');
     panel.scrollTop = 0;
 }
 
-let layerState = { flares: true, permits: true, plumes: false, wells: false };
+let layerState = { flares: true, permits: true, plumes: false, wells: false, infra: false };
 let operatorFilter = '';
 let overlappingFeatures = [];
 let overlapIndex = 0;
@@ -116,6 +121,7 @@ map.on('load', async () => {
                 permits: { latCol: 'latitude', lonCol: 'longitude' },
                 plumes: { latCol: 'latitude', lonCol: 'longitude' },
                 wells: { latCol: 'latitude', lonCol: 'longitude' },
+                infra: { latCol: 'latitude', lonCol: 'longitude' },
             }[layer];
             if (!info) return;
 
@@ -136,6 +142,27 @@ map.on('load', async () => {
 
 });
 
+function syncDrawer(f) {
+    const lid = f.layer.id;
+    const p = f.properties;
+    if (lid.startsWith('flare')) drawer.highlight('flares-layer', String(p.flare_id));
+    else if (lid.startsWith('permits')) drawer.highlight('permits-layer', `${p.latitude}_${p.longitude}_${p.name}`);
+    else if (lid.startsWith('plumes')) drawer.highlight('plumes-layer', String(p.plume_id));
+    else if (lid.startsWith('wells')) drawer.highlight('wells-layer', String(p.api));
+    else if (lid.startsWith('infra')) drawer.highlight('infra-layer', String(p.serial_number));
+}
+
+function featureKey(f) {
+    const p = f.properties;
+    if (f.layer.id === 's2-points' && p.id) return `s2:${p.id}`;
+    if (p.flare_id != null) return `flare:${p.flare_id}`;
+    if (p.plume_id != null) return `plume:${p.plume_id}`;
+    if (p.api != null) return `well:${p.api}`;
+    if (p.serial_number != null && f.layer.id.startsWith('infra')) return `infra:${p.serial_number}`;
+    if (p.name != null && p.latitude != null) return `permit:${p.latitude}_${p.longitude}_${p.name}`;
+    return `${f.layer.id}:${f.id}`;
+}
+
 function addEmptySources() {
     const empty = { type: 'FeatureCollection', features: [] };
     map.addSource('texas', { type: 'geojson', data: 'data/texas.geojson' });
@@ -143,8 +170,9 @@ function addEmptySources() {
     map.addSource('permits', { type: 'geojson', data: empty });
     map.addSource('plumes', { type: 'geojson', data: empty });
     map.addSource('wells', { type: 'geojson', data: empty });
+    map.addSource('infra', { type: 'geojson', data: empty });
     map.addSource('flare-pixels', { type: 'geojson', data: empty });
-    map.addSource('s2-detections', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+    map.addSource('s2-detections', { type: 'geojson', data: empty });
 }
 
 function addWellImage() {
@@ -162,6 +190,26 @@ function addWellImage() {
     ctx.stroke();
     const imgData = ctx.getImageData(0, 0, size, size);
     map.addImage('well-x', { width: size, height: size, data: imgData.data }, { sdf: true });
+}
+
+function addInfraImage() {
+    const size = 24;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 4;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(size / 2, 4);
+    ctx.lineTo(size - 4, size - 4);
+    ctx.lineTo(4, size - 4);
+    ctx.closePath();
+    ctx.stroke();
+    const imgData = ctx.getImageData(0, 0, size, size);
+    map.addImage('infra-triangle', { width: size, height: size, data: imgData.data }, { sdf: true });
 }
 
 function addLayers() {
@@ -219,6 +267,23 @@ function addLayers() {
         }
     });
 
+    // Infrastructure: R-3 gas processing facilities (triangle marker)
+    addInfraImage();
+    map.addLayer({
+        id: 'infra-layer', type: 'symbol', source: 'infra',
+        layout: {
+            visibility: 'none',
+            'icon-image': 'infra-triangle',
+            'icon-size': 0.45,
+            'icon-allow-overlap': true,
+            'icon-ignore-placement': true,
+        },
+        paint: {
+            'icon-color': COLORS.infra,
+            'icon-opacity': 0.85,
+        }
+    });
+
     map.addLayer({
         id: 'permits-layer', type: 'circle', source: 'permits',
         paint: {
@@ -233,7 +298,7 @@ function addLayers() {
     map.addLayer({
         id: 'plumes-layer', type: 'circle', source: 'plumes',
         layout: { visibility: 'none' },
-        paint: { 'circle-radius': plumeRadius(), 'circle-color': COLORS.plume, 'circle-opacity': 0.25, 'circle-stroke-width': 1, 'circle-stroke-color': COLORS.plume }
+        paint: { 'circle-radius': PLUME_RADIUS, 'circle-color': COLORS.plume, 'circle-opacity': 0.25, 'circle-stroke-width': 1, 'circle-stroke-color': COLORS.plume }
     });
 
     // Flare stroke color ramp by avg_rh_mw (p25=0.5, p50=0.8, p75=1.3, p90=2.1)
@@ -249,24 +314,27 @@ function addLayers() {
         paint: { 'fill-color': 'transparent' }
     });
 
-    // Dashed outline
+    // Dashed outline — fades in as the flare dot fades out (zoom 13→15)
     map.addLayer({
         id: 'flare-pixels-layer', type: 'line', source: 'flare-pixels',
         paint: {
             'line-color': 'rgba(255,255,255,0.8)',
             'line-width': 1,
-            'line-dasharray': [3, 2]
+            'line-dasharray': [3, 2],
+            'line-opacity': ['interpolate', ['linear'], ['zoom'], 13, 0, 15, 1]
         }
     });
 
     // Label above pixel square (positioned at top-left corner)
+    // Text scales with zoom so it stays proportional to the 750m box on the ground.
+    // At z15 750m ≈ 200px, we want ~11px text. Doubling per zoom: 11 / 2^(15-z).
     map.addSource('flare-pixel-labels', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
     map.addLayer({
         id: 'flare-pixels-label', type: 'symbol', source: 'flare-pixel-labels',
         layout: {
             'text-field': 'FLARE DETECTION AREA',
             'text-font': ['Noto Sans Regular'],
-            'text-size': 11,
+            'text-size': ['interpolate', ['exponential', 2], ['zoom'], 13, 2.75, 15, 11, 17, 44],
             'text-anchor': 'bottom-left',
             'text-max-width': 999,
             'text-offset': [-0.1, -0.3]
@@ -314,9 +382,7 @@ function addLayers() {
 
 }
 
-function plumeRadius() {
-    return ['interpolate', ['linear'], ['coalesce', ['get', 'emission_rate'], 100], 10, 3, 500, 8, 5000, 18];
-}
+const PLUME_RADIUS = ['interpolate', ['linear'], ['coalesce', ['get', 'emission_rate'], 100], 10, 3, 500, 8, 5000, 18];
 
 // Generate 750m square polygons and top-left label points from flare data
 function flarePixelData(flareGeoJson) {
@@ -326,7 +392,7 @@ function flarePixelData(flareGeoJson) {
     for (const f of flareGeoJson.features) {
         const [lon, lat] = f.geometry.coordinates;
         const dLat = HALF_M * LAT_PER_M;
-        const dLon = HALF_M * lonPerM(lat);
+        const dLon = HALF_M * LON_PER_M(lat);
         squares.push({
             type: 'Feature',
             geometry: {
@@ -375,6 +441,13 @@ async function loadPlumes() {
     const data = await db.queryPlumes();
     map.getSource('plumes').setData(data);
     drawer.setData('plumes', data.features);
+}
+
+async function loadInfra() {
+    if (!layerState.infra) return;
+    const data = await db.queryFacilities();
+    map.getSource('infra').setData(data);
+    drawer.setData('infra', data.features);
 }
 
 const WELLS_MIN_ZOOM = 10;
@@ -434,7 +507,8 @@ const LAYER_MAP = {
     flares: ['flares-layer', 'flare-pixels-fill', 'flare-pixels-layer', 'flare-pixels-label', 's2-points'],
     permits: ['permits-layer'],
     plumes: ['plumes-layer'],
-    wells: ['wells-layer']
+    wells: ['wells-layer'],
+    infra: ['infra-layer']
 };
 
 function setLayerVisibility(layer, visible) {
@@ -447,6 +521,7 @@ function setLayerVisibility(layer, visible) {
         if (layer === 'permits') loadPermits();
         if (layer === 'plumes') loadPlumes();
         if (layer === 'wells') loadWells();
+        if (layer === 'infra') loadInfra();
     }
 }
 
@@ -457,7 +532,8 @@ const ALL_CLICK_LAYERS = [
     's2-points',
     'permits-layer',
     'plumes-layer',
-    'wells-layer'
+    'wells-layer',
+    'infra-layer'
 ];
 
 function bindUI() {
@@ -524,17 +600,7 @@ function bindUI() {
         // Prefer point features: process non-pixel layers first
         const sorted = [...raw].sort((a, b) => (PIXEL_LAYERS.has(a.layer.id) ? 1 : 0) - (PIXEL_LAYERS.has(b.layer.id) ? 1 : 0));
         for (const f of sorted) {
-            const isS2 = f.layer.id === 's2-points';
-            const p = f.properties;
-            const key = isS2 && p.id
-                ? `s2:${p.id}`
-                : p.flare_id != null
-                    ? `flare:${p.flare_id}`
-                    : p.plume_id != null
-                        ? `plume:${p.plume_id}`
-                        : p.name != null && p.latitude != null
-                            ? `permit:${p.latitude}_${p.longitude}_${p.name}`
-                            : `${f.layer.id}:${f.id}`;
+            const key = featureKey(f);
             if (seen.has(key)) continue;
             seen.add(key);
             features.push(f);
@@ -561,18 +627,7 @@ function bindUI() {
         overlapIndex = 0;
         showFeatureDetail(features[0]);
 
-        // Sync selection to drawer
-        const f = features[0];
-        const layerId = f.layer.id;
-        if (layerId.startsWith('flare')) {
-            drawer.highlight('flares-layer', String(f.properties.flare_id));
-        } else if (layerId.startsWith('permits')) {
-            drawer.highlight('permits-layer', `${f.properties.latitude}_${f.properties.longitude}_${f.properties.name}`);
-        } else if (layerId.startsWith('plumes')) {
-            drawer.highlight('plumes-layer', String(f.properties.plume_id));
-        } else if (layerId.startsWith('wells')) {
-            drawer.highlight('wells-layer', String(f.properties.api));
-        }
+        syncDrawer(features[0]);
     });
 
     // Cursor changes for interactive layers
@@ -590,22 +645,13 @@ function bindUI() {
 }
 
 // Hash param helpers — coexist with MapLibre's #map=zoom/lat/lon
-function updateFlareUrl(flareId, mode) {
+function updateHash(params) {
     const hash = location.hash.replace(/^#/, '');
     const mapPart = hash.split('&').find(p => p.startsWith('map='));
     const parts = mapPart ? [mapPart] : [];
-    if (flareId != null) {
-        parts.push(`vnf=${encodeURIComponent(flareId)}`);
-        if (mode) parts.push(`mode=${encodeURIComponent(mode)}`);
+    for (const [k, v] of Object.entries(params)) {
+        if (v != null) parts.push(`${k}=${encodeURIComponent(v)}`);
     }
-    history.replaceState(null, '', location.pathname + location.search + '#' + parts.join('&'));
-}
-
-function updateS2Url(s2Id) {
-    const hash = location.hash.replace(/^#/, '');
-    const mapPart = hash.split('&').find(p => p.startsWith('map='));
-    const parts = mapPart ? [mapPart] : [];
-    if (s2Id != null) parts.push(`s2=${encodeURIComponent(s2Id)}`);
     history.replaceState(null, '', location.pathname + location.search + '#' + parts.join('&'));
 }
 
@@ -620,7 +666,7 @@ function handleDeepLink() {
     if (params.s2) {
         const cluster = getCluster(params.s2);
         if (cluster) {
-            updateS2Url(cluster.id);
+            updateHash({ s2: cluster.id });
             map.flyTo({ center: [cluster.lon, cluster.lat], zoom: 16 });
             showS2ClusterDetail(cluster);
         }
@@ -634,7 +680,7 @@ function handleDeepLink() {
     if (!feature) return;
 
     const [lon, lat] = feature.geometry.coordinates;
-    updateFlareUrl(flareId, params.mode || null);
+    updateHash({ vnf: flareId, mode: params.mode || undefined });
     map.flyTo({ center: [lon, lat], zoom: 14 });
 
     if (params.mode === 's2') {
@@ -653,54 +699,94 @@ function removeS2Badge() {
 // ---------------------------------------------------------------------------
 // Selection visual state — dims map, highlights selected + associated features
 // ---------------------------------------------------------------------------
-function activateSelection(lon, lat, opts = {}) {
-    const { flareId } = opts;
-    // Dim overlay
-    $('map-dim-overlay').classList.add('active');
-    // Fade point layers — selected feature and associated S2 detections stay bright
-    if (map.getLayer('flares-layer')) {
-        const strokeOp = flareId != null
-            ? ['case', ['==', ['get', 'flare_id'], flareId], 1, 0.15]
-            : 0.15;
-        const fillOp = flareId != null
-            ? ['case', ['==', ['get', 'flare_id'], flareId], 0.4, 0.05]
-            : 0.05;
-        map.setPaintProperty('flares-layer', 'circle-stroke-opacity', strokeOp);
-        map.setPaintProperty('flares-layer', 'circle-opacity', fillOp);
+
+// Default opacity values for each layer (must match addLayers paint values).
+// Used by activateSelection/deactivateSelection to dim/restore layers.
+const LAYER_DEFAULTS = {
+    'flares-layer': {
+        'circle-stroke-opacity': ['interpolate', ['linear'], ['zoom'], 13, 1, 15, 0],
+        'circle-opacity': ['interpolate', ['linear'], ['zoom'], 13, 0.25, 15, 0],
+    },
+    'flare-pixels-layer': {
+        'line-opacity': ['interpolate', ['linear'], ['zoom'], 13, 0, 15, 1],
+    },
+    'flare-pixels-label': {
+        'text-opacity': ['interpolate', ['linear'], ['zoom'], 13, 0, 15, 1],
+    },
+    'permits-layer': { 'circle-stroke-opacity': 1, 'circle-opacity': 0.25 },
+    'plumes-layer': { 'circle-stroke-opacity': 1, 'circle-opacity': 0.25 },
+    'wells-layer': { 'icon-opacity': 0.85 },
+    'infra-layer': { 'icon-opacity': 0.85 },
+    's2-points': { 'circle-stroke-opacity': 1, 'circle-opacity': 0.25 },
+};
+
+// How much to scale each property type when dimmed (unselected).
+// Pixel boxes/labels use 0 — only the selected flare's detection area is shown.
+const DIM_RATIOS = {
+    'circle-stroke-opacity': 0.15, 'circle-opacity': 0.2,
+    'icon-opacity': 0.18,
+    'line-opacity': 0, 'text-opacity': 0,
+};
+
+// Build a paint expression: matched features stay at base, rest are dimmed.
+// For zoom-based interpolations, data-driven case is embedded inside each stop
+// (MapLibre requires data expressions inside zoom interpolations, not outside).
+function dimPaint(base, ratio, match) {
+    if (typeof base === 'number') {
+        if (!match) return base * ratio;
+        return ['case', match, base, base * ratio];
     }
-    if (map.getLayer('permits-layer')) map.setPaintProperty('permits-layer', 'circle-stroke-opacity', 0.15);
-    if (map.getLayer('plumes-layer')) map.setPaintProperty('plumes-layer', 'circle-stroke-opacity', 0.15);
-    if (map.getLayer('wells-layer')) map.setPaintProperty('wells-layer', 'icon-opacity', 0.15);
-    if (map.getLayer('s2-points')) {
-        const op = flareId != null
-            ? ['case', ['==', ['get', 'flare_id'], flareId], 1, 0.15]
-            : 0.15;
-        map.setPaintProperty('s2-points', 'circle-stroke-opacity', op);
-        map.setPaintProperty('s2-points', 'circle-opacity',
-            flareId != null ? ['case', ['==', ['get', 'flare_id'], flareId], 0.4, 0.05] : 0.05);
+    // Zoom interpolation: ['interpolate', ['linear'], ['zoom'], z0, v0, z1, v1, ...]
+    const result = [base[0], base[1], base[2]];
+    for (let i = 3; i < base.length; i += 2) {
+        const z = base[i], v = base[i + 1];
+        result.push(z);
+        result.push(!match ? v * ratio : ['case', match, v, v * ratio]);
+    }
+    return result;
+}
+
+function activateSelection({ flareId, permitProps, plumeId, wellApi, infraSerial } = {}) {
+    $('map-dim-overlay').classList.add('active');
+
+    const flareMatch = flareId != null ? ['==', ['get', 'flare_id'], flareId] : null;
+    const matches = {
+        'flares-layer': flareMatch,
+        'flare-pixels-layer': flareMatch,
+        'flare-pixels-label': flareMatch,
+        'permits-layer': permitProps ? ['all',
+            ['==', ['get', 'latitude'], Number(permitProps.latitude)],
+            ['==', ['get', 'longitude'], Number(permitProps.longitude)],
+            ['==', ['get', 'name'], permitProps.name]] : null,
+        'plumes-layer': plumeId != null ? ['==', ['get', 'plume_id'], plumeId] : null,
+        'wells-layer': wellApi != null ? ['==', ['get', 'api'], wellApi] : null,
+        'infra-layer': infraSerial != null ? ['==', ['get', 'serial_number'], infraSerial] : null,
+        's2-points': flareMatch,
+    };
+
+    for (const [layerId, defaults] of Object.entries(LAYER_DEFAULTS)) {
+        if (!map.getLayer(layerId)) continue;
+        const match = matches[layerId];
+        for (const [prop, base] of Object.entries(defaults)) {
+            map.setPaintProperty(layerId, prop, dimPaint(base, DIM_RATIOS[prop], match));
+        }
     }
 }
 
 function deactivateSelection() {
     $('map-dim-overlay').classList.remove('active');
-    if (map.getLayer('flares-layer')) {
-        map.setPaintProperty('flares-layer', 'circle-stroke-opacity', ['interpolate', ['linear'], ['zoom'], 13, 1, 15, 0]);
-        map.setPaintProperty('flares-layer', 'circle-opacity', ['interpolate', ['linear'], ['zoom'], 13, 0.25, 15, 0]);
-    }
-    if (map.getLayer('permits-layer')) map.setPaintProperty('permits-layer', 'circle-stroke-opacity', 1);
-    if (map.getLayer('plumes-layer')) map.setPaintProperty('plumes-layer', 'circle-stroke-opacity', 1);
-    if (map.getLayer('wells-layer')) map.setPaintProperty('wells-layer', 'icon-opacity', 0.85);
-    if (map.getLayer('s2-points')) {
-        map.setPaintProperty('s2-points', 'circle-stroke-opacity', 1);
-        map.setPaintProperty('s2-points', 'circle-opacity', 0.25);
+    for (const [layerId, defaults] of Object.entries(LAYER_DEFAULTS)) {
+        if (!map.getLayer(layerId)) continue;
+        for (const [prop, base] of Object.entries(defaults)) {
+            map.setPaintProperty(layerId, prop, base);
+        }
     }
 }
 
 function closeDetail() {
     removeS2Badge();
     closeS2Pixels();
-    updateFlareUrl(null);
-    updateS2Url(null);
+    updateHash({});
     $('detail-panel').classList.add('hidden');
     deactivateSelection();
     overlappingFeatures = [];
@@ -803,13 +889,14 @@ async function loadS2Pixels(det, clusterLon, clusterLat) {
         const ctx = canvas.getContext('2d');
         const imgData = ctx.createImageData(w, h);
 
-        const scale = 0.0001, offset = -0.1, threshold = 0.6, ceiling = 1.5;
+        // B12 reflectance conversion: raw DN → reflectance, then hot-pixel filter
+        const B12_SCALE = 0.0001, B12_OFFSET = -0.1, B12_THRESHOLD = 0.6, B12_CEILING = 1.5;
         for (let i = 0; i < data.length; i++) {
-            const v = data[i] * scale + offset;
-            if (v <= threshold) {
+            const v = data[i] * B12_SCALE + B12_OFFSET;
+            if (v <= B12_THRESHOLD) {
                 imgData.data[i * 4 + 3] = 0;
             } else {
-                const t = Math.min(1, (v - threshold) / (ceiling - threshold));
+                const t = Math.min(1, (v - B12_THRESHOLD) / (B12_CEILING - B12_THRESHOLD));
                 const [r, g, b] = magmaColor(t);
                 imgData.data[i * 4] = r;
                 imgData.data[i * 4 + 1] = g;
@@ -846,13 +933,16 @@ async function loadS2Pixels(det, clusterLon, clusterLat) {
 function showFeatureDetail(feature) {
     removeS2Badge();
     const layer = feature.layer.id;
+    const p = feature.properties;
 
-    // Activate selection visuals (dim + halo)
-    const coords = feature.geometry.type === 'Point'
-        ? feature.geometry.coordinates
-        : [Number(feature.properties.lon || feature.properties.longitude), Number(feature.properties.lat || feature.properties.latitude)];
-    const flareId = feature.properties.flare_id != null ? feature.properties.flare_id : undefined;
-    activateSelection(coords[0], coords[1], { flareId });
+    // Build selection opts: each layer type identifies its selected feature differently
+    const selOpts = {};
+    if (p.flare_id != null) selOpts.flareId = p.flare_id;
+    if (layer.startsWith('permits-')) selOpts.permitProps = { latitude: p.latitude, longitude: p.longitude, name: p.name };
+    if (layer.startsWith('plumes-')) selOpts.plumeId = p.plume_id;
+    if (layer.startsWith('wells-')) selOpts.wellApi = p.api;
+    if (layer.startsWith('infra-')) selOpts.infraSerial = p.serial_number;
+    activateSelection(selOpts);
 
     if (layer === 's2-points') {
         // Don't cancel enhance — let it run in background
@@ -861,14 +951,18 @@ function showFeatureDetail(feature) {
     } else {
         if (layer.startsWith('flare')) showFlareDetail(feature);
         else {
-            updateFlareUrl(null);
+            updateHash({});
             if (layer.startsWith('permits-')) showPermitDetail(feature);
             else if (layer.startsWith('plumes-')) showPlumeDetail(feature);
             else if (layer.startsWith('wells-')) showWellDetail(feature);
+            else if (layer.startsWith('infra-')) showInfraDetail(feature);
         }
     }
 
-    // Update overlap nav for overlapping permits or plumes
+    updateOverlapNav();
+}
+
+function updateOverlapNav() {
     const layer0 = overlappingFeatures[0]?.layer?.id || '';
     const group = layer0.startsWith('permits-') ? 'permits-' : layer0.startsWith('plumes-') ? 'plumes-' : null;
     const nav = $('overlap-nav');
@@ -878,19 +972,43 @@ function showFeatureDetail(feature) {
             overlappingFeatures = grouped;
             nav.classList.remove('hidden');
             $('overlap-count').textContent = `${overlapIndex + 1} / ${overlappingFeatures.length}`;
-        } else {
-            nav.classList.add('hidden');
+            return;
         }
-    } else {
-        nav.classList.add('hidden');
     }
+    nav.classList.add('hidden');
 }
+
+// ---------------------------------------------------------------------------
+// Card building blocks — return HTML strings, compose via arrays in openDetail
+// ---------------------------------------------------------------------------
 
 function field(label, value) {
     return `<div class="detail-field"><span class="detail-field-label">${label}</span><span class="detail-field-value">${value}</span></div>`;
 }
 
-// Merge overlapping/adjacent date ranges into a sorted list of non-overlapping intervals
+const card = {
+    // Stats grid: [{value, unit, id?}, ...]
+    stats: (items) => `<div class="stats-grid">${items.map(
+        i => `<div class="stat"><div class="stat-big"${i.id ? ` id="${i.id}"` : ''}>${i.value}</div><div class="stat-unit">${i.unit}</div></div>`
+    ).join('')}</div>`,
+
+    // Key-value field row: [label, value] pairs. Falsy pairs and null values are filtered.
+    fields: (...pairs) => {
+        const html = pairs.filter(p => p && p[1] != null).map(([l, v]) => field(l, v)).join('');
+        return html ? `<div class="detail-row">${html}</div>` : '';
+    },
+
+    // Section header
+    header: (text) => `<div class="section-header">${text}</div>`,
+
+    // Async placeholder — filled later via $('id').innerHTML = ...
+    section: (id) => `<div id="${id}"></div>`,
+};
+
+// ---------------------------------------------------------------------------
+// Shared data helpers for detail cards
+// ---------------------------------------------------------------------------
+
 function mergeRanges(filings) {
     const ranges = filings
         .filter(f => f.effective_dt)
@@ -909,185 +1027,153 @@ function mergeRanges(filings) {
     return merged;
 }
 
-// Compute permit coverage for a detection window given nearby filings
 function computeCoverage(filings, firstDetected, lastDetected) {
     if (!firstDetected || !lastDetected || filings.length === 0) return null;
     const merged = mergeRanges(filings);
     if (merged.length === 0) return { status: 'uncovered', gaps: null };
-
-    // Find gaps within the detection window
     const gaps = [];
     let cursor = firstDetected;
     for (const [start, end] of merged) {
-        if (start > cursor && start <= lastDetected) {
-            gaps.push([cursor, start]);
-        }
+        if (start > cursor && start <= lastDetected) gaps.push([cursor, start]);
         if (end > cursor) cursor = end;
     }
-    if (cursor < lastDetected) {
-        gaps.push([cursor, lastDetected]);
-    }
-
-    // Check if detection window is covered at all
+    if (cursor < lastDetected) gaps.push([cursor, lastDetected]);
     const firstCovered = merged.some(([s, e]) => s <= firstDetected && e >= firstDetected);
     const lastCovered = merged.some(([s, e]) => s <= lastDetected && e >= lastDetected);
-    if (firstCovered && lastCovered && gaps.length === 0) {
-        return { status: 'covered', gaps: null };
-    }
+    if (firstCovered && lastCovered && gaps.length === 0) return { status: 'covered', gaps: null };
     return { status: gaps.length > 0 ? 'gap' : 'partial', gaps };
 }
 
-function operatorInfo(op) {
-    if (!op) return { operator: null, confidence: null, permitName: null, distanceKm: null };
-    const confidence = op.confidence ? op.confidence.charAt(0).toUpperCase() + op.confidence.slice(1) : null;
-    const distanceKm = op.nearest_permit_km != null ? Number(op.nearest_permit_km) : null;
-    return {
-        operator: op.operator_name,
-        confidence,
-        permitName: op.permit_name || null,
-        distanceKm,
+function coverageLabel(coverage) {
+    if (!coverage) return null;
+    const labels = {
+        covered: '<span class="permit-covered">Covered</span>',
+        gap: '<span class="permit-uncovered">Gap in coverage</span>',
+        partial: '<span class="permit-uncovered">Partial</span>',
     };
+    return labels[coverage.status] || '<span class="permit-uncovered">Uncovered</span>';
 }
 
-function permitCoverageHtml(info, coverage, firstDetected, lastDetected) {
-    if (!info) return '';
-    let coverageLabel = '';
-    if (coverage) {
-        if (coverage.status === 'covered')
-            coverageLabel = '<span class="permit-covered">Covered</span>';
-        else if (coverage.status === 'gap')
-            coverageLabel = '<span class="permit-uncovered">Gap in coverage</span>';
-        else if (coverage.status === 'partial')
-            coverageLabel = '<span class="permit-uncovered">Partial</span>';
-        else
-            coverageLabel = '<span class="permit-uncovered">Uncovered</span>';
+// Shared attribution block — facility match takes precedence over operator
+function attributionHtml(facs, op, filings, firstDate, lastDate) {
+    if (facs.length > 0) {
+        const f = facs[0];
+        return [
+            card.fields(
+                ['Facility', f.facility_name],
+                f.plant_type && ['Type', f.plant_type],
+                ['Distance', (f.distance_km * 1000).toFixed(0) + 'm'],
+            ),
+            card.fields(
+                ['First detected', formatDate(firstDate)],
+                ['Last detected', formatDate(lastDate)],
+            ),
+        ].join('');
     }
+    if (!op) return '';
+    const confidence = op.confidence ? op.confidence.charAt(0).toUpperCase() + op.confidence.slice(1) : null;
+    const distKm = op.nearest_permit_km != null ? Number(op.nearest_permit_km) : null;
+    const coverage = computeCoverage(filings, firstDate, lastDate);
     const gapHtml = coverage?.gaps?.length
         ? coverage.gaps.map(([a, b]) => `${formatDate(a)} – ${formatDate(b)}`).join('<br>')
-        : '';
-    return `
-        <div class="detail-row">
-            ${field('Operator', info.operator || 'N/A')}
-            ${info.confidence != null ? field('Confidence', info.confidence) : ''}
-            ${field('Nearest permit', info.permitName || 'None')}
-            ${field('Distance', info.distanceKm != null ? info.distanceKm.toFixed(2) + ' km' : 'N/A')}
-            ${coverageLabel ? field('Coverage', coverageLabel) : ''}
-            ${gapHtml ? field('Gaps', gapHtml) : ''}
-        </div>
-        <div class="detail-row">
-            ${field('First detected', formatDate(firstDetected))}
-            ${field('Last detected', formatDate(lastDetected))}
-        </div>
-    `;
+        : null;
+    return [
+        card.fields(
+            ['Operator', op.operator_name || 'N/A'],
+            confidence != null && ['Confidence', confidence],
+            ['Nearest permit', op.permit_name || 'None'],
+            ['Distance', distKm != null ? distKm.toFixed(2) + ' km' : 'N/A'],
+            coverageLabel(coverage) && ['Coverage', coverageLabel(coverage)],
+            gapHtml && ['Gaps', gapHtml],
+        ),
+        card.fields(
+            ['First detected', formatDate(firstDate)],
+            ['Last detected', formatDate(lastDate)],
+        ),
+    ].join('');
 }
 
-async function showFlareDetail(feature) {
+// ---------------------------------------------------------------------------
+// Detail cards
+// ---------------------------------------------------------------------------
+
+function showFlareDetail(feature) {
     const p = feature.properties;
-    updateFlareUrl(p.flare_id);
+    updateHash({ vnf: p.flare_id });
 
-    openDetail(`Flare ${p.flare_id}`, p.lat, p.lon, `
-        <div class="stats-grid">
-            <div class="stat"><div class="stat-big">${num(p.total_rh_mw)}</div><div class="stat-unit">total MW</div></div>
-            <div class="stat"><div class="stat-big">${num(p.detection_days)}</div><div class="stat-unit">detection days</div></div>
-        </div>
-        <div id="vnf-operator-section"></div>
-        <div id="vnf-lease-section"></div>
-    `);
+    openDetail(`Flare ${p.flare_id}`, p.lat, p.lon, [
+        card.stats([
+            { value: num(p.total_rh_mw), unit: 'total MW' },
+            { value: num(p.detection_days), unit: 'detection days' },
+        ]),
+        card.section('vnf-operator-section'),
+        card.section('vnf-lease-section'),
+    ]);
 
-    // Operator attribution: facility match takes precedence over well/permit attribution
     Promise.all([
         db.queryNearbyFacilities(Number(p.lat), Number(p.lon)),
         db.queryOperator(p.flare_id, Number(p.lat), Number(p.lon)),
         db.queryPermitFilings(Number(p.lat), Number(p.lon)),
     ]).then(([facs, op, filings]) => {
-        const opEl = $('vnf-operator-section');
-        if (!opEl) return;
-
-        if (facs.length > 0) {
-            // Facility is the likely source — show facility info instead of operator
-            const f = facs[0];
-            opEl.innerHTML = `
-                <div class="detail-row">
-                    ${field('Facility', f.facility_name)}
-                    ${field('Distance', (f.distance_km * 1000).toFixed(0) + 'm')}
-                </div>
-                <div class="detail-row">
-                    ${field('First detected', formatDate(p.first_detected))}
-                    ${field('Last detected', formatDate(p.last_detected))}
-                </div>
-            `;
-        } else {
-            const info = operatorInfo(op);
-            const coverage = computeCoverage(filings, p.first_detected, p.last_detected);
-            opEl.innerHTML = permitCoverageHtml(info, coverage, p.first_detected, p.last_detected);
-        }
+        const el = $('vnf-operator-section');
+        if (el) el.innerHTML = attributionHtml(facs, op, filings, p.first_detected, p.last_detected);
     }).catch(() => {});
 
-    // Leases (async)
     db.queryLeases(p.flare_id).then(leases => {
         const el = $('vnf-lease-section');
         if (!el || leases.length === 0) return;
-        const rows = leases.map(l => {
+        el.innerHTML = leases.map(l => {
             const name = l.lease_name || `${l.lease_district}-${l.lease_number}`;
             const flared = Number(l.reported_flared_mcf) || 0;
-            return `<div class="detail-row lease-row">
-                ${field('Lease', name)}
-                ${l.lease_operator ? field('Operator', l.lease_operator) : ''}
-                ${field('Wells', num(l.well_count))}
-                ${flared > 0 ? field('Reported flared', flared.toLocaleString() + ' MCF') : ''}
-            </div>`;
-        });
-        el.innerHTML = rows.join('');
+            return card.fields(
+                ['Lease', name],
+                l.lease_operator && ['Operator', l.lease_operator],
+                ['Wells', num(l.well_count)],
+                flared > 0 && ['Reported flared', flared.toLocaleString() + ' MCF'],
+            );
+        }).join('');
     }).catch(() => {});
 
-    // Load sparkline async, then append enhance button after chart renders
     db.queryDetections(p.flare_id).then(detections => {
         renderSparkline(detections);
-
-        // Enhance button — appended after sparkline so it's not overwritten
-        const chartContainer = $('intensity-chart');
-        const enhanceBtn = document.createElement('button');
-        enhanceBtn.className = 'btn-action enhance-btn';
-        enhanceBtn.textContent = 'Enhance with Sentinel-2';
-        enhanceBtn.addEventListener('click', () => {
-            showEnhanceDetail(feature);
-        });
-        chartContainer.appendChild(enhanceBtn);
+        const btn = document.createElement('button');
+        btn.className = 'btn-action enhance-btn';
+        btn.textContent = 'Enhance with Sentinel-2';
+        btn.addEventListener('click', () => showEnhanceDetail(feature));
+        $('intensity-chart').appendChild(btn);
     }).catch(() => {});
 }
 
 function showPermitDetail(feature) {
     const p = feature.properties;
     const rate = Number(p.max_release_rate_mcf_day);
-    openDetail(p.name || 'Permit location', p.latitude, p.longitude, `
-        <div class="stats-grid">
-            <div class="stat"><div class="stat-big">${rate > 0 ? rate.toLocaleString() : 'N/A'}</div><div class="stat-unit">max Mcf/day</div></div>
-            <div class="stat"><div class="stat-big" id="permit-filings-count">${Number(p.n_filings)}</div><div class="stat-unit">filings</div></div>
-        </div>
-        <div class="detail-row">
-            ${field('Operator', p.operator_name || 'N/A')}
-            ${field('County', p.county || 'N/A')}
-            ${field('District', p.district || 'N/A')}
-            ${field('Release type', p.release_type || 'N/A')}
-        </div>
-        <div id="permit-filings-section"></div>
-    `);
+    openDetail(p.name || 'Permit location', p.latitude, p.longitude, [
+        card.stats([
+            { value: rate > 0 ? rate.toLocaleString() : 'N/A', unit: 'max Mcf/day' },
+            { value: Number(p.n_filings), unit: 'filings', id: 'permit-filings-count' },
+        ]),
+        card.fields(
+            ['Operator', p.operator_name || 'N/A'],
+            ['County', p.county || 'N/A'],
+            ['District', p.district || 'N/A'],
+            ['Release type', p.release_type || 'N/A'],
+        ),
+        card.section('permit-filings-section'),
+    ]);
 
-    // Load individual filings for this specific permit
     db.queryPermitFilings(Number(p.latitude), Number(p.longitude), { radiusKm: 0.01, name: p.name, operator: p.operator_name }).then(filings => {
         const el = $('permit-filings-section');
         if (!el || filings.length === 0) return;
         const countEl = $('permit-filings-count');
         if (countEl) countEl.textContent = filings.length;
-        const filingsHtml = filings.map(f =>
-            `<div class="detail-row filing-row">
-                ${field('Effective', formatDate(f.effective_dt))}
-                ${field('Expiration', formatDate(f.expiration_dt))}
-                ${f.status ? field('Status', f.status) : ''}
-                ${f.exception_reasons ? field('Reasons', f.exception_reasons) : ''}
-            </div>`
-        ).join('');
-        el.innerHTML = `<div class="filings-list">${filingsHtml}</div>`;
+        el.innerHTML = `<div class="filings-list">${filings.map(f =>
+            card.fields(
+                ['Effective', formatDate(f.effective_dt)],
+                ['Expiration', formatDate(f.expiration_dt)],
+                f.status && ['Status', f.status],
+                f.exception_reasons && ['Reasons', f.exception_reasons],
+            )
+        ).join('')}</div>`;
     }).catch(() => {});
 }
 
@@ -1100,18 +1186,18 @@ function plumeUrl(source, id) {
 function showPlumeDetail(feature) {
     const p = feature.properties;
     const url = plumeUrl(p.source, p.plume_id);
-    openDetail(p.plume_id, p.latitude, p.longitude, `
-        <div class="stats-grid">
-            <div class="stat"><div class="stat-big">${Number(p.emission_rate).toLocaleString()}</div><div class="stat-unit">kg/hr</div></div>
-            <div class="stat"><div class="stat-big">&plusmn;${Number(p.emission_uncertainty || 0).toLocaleString()}</div><div class="stat-unit">uncertainty</div></div>
-        </div>
-        <div class="detail-row">
-            ${field('Source', p.source)}
-            ${field('Satellite', p.satellite || 'N/A')}
-            ${field('Date', formatDate(p.date))}
-            ${field('Sector', p.sector || 'N/A')}
-        </div>
-    `);
+    openDetail(p.plume_id, p.latitude, p.longitude, [
+        card.stats([
+            { value: Number(p.emission_rate).toLocaleString(), unit: 'kg/hr' },
+            { value: `&plusmn;${Number(p.emission_uncertainty || 0).toLocaleString()}`, unit: 'uncertainty' },
+        ]),
+        card.fields(
+            ['Source', p.source],
+            ['Satellite', p.satellite || 'N/A'],
+            ['Date', formatDate(p.date)],
+            ['Sector', p.sector || 'N/A'],
+        ),
+    ]);
     if (url) $('detail-title').innerHTML = `<a href="${url}" target="_blank" rel="noopener" style="color: inherit; text-decoration: none;">${p.plume_id}</a>`;
 }
 
@@ -1124,28 +1210,25 @@ function showWellDetail(feature) {
     const leaseName = p.lease_name || leaseId;
     const hasLease = leaseId != null;
 
-    openDetail(`Well ${p.api}`, p.latitude, p.longitude, `
-        <div class="detail-row">
-            ${field('Operator', p.operator_name || 'N/A')}
-            ${field('Type', p.oil_gas_code === 'O' ? 'Oil' : p.oil_gas_code === 'G' ? 'Gas' : p.oil_gas_code || 'N/A')}
-            ${field('District', p.lease_district || 'N/A')}
-            ${field('Well #', p.well_number || 'N/A')}
-        </div>
-        ${hasLease ? `
-        <div class="well-lease-section">
-            <div class="well-lease-header">Lease ${leaseName}</div>
-            <div class="detail-row">
-                ${field('Gas flared (MCF)', flared > 0 ? flared.toLocaleString() : 'None reported')}
-                ${field('Gas produced (MCF)', produced > 0 ? produced.toLocaleString() : 'None reported')}
-                ${field('Flaring intensity', intensity)}
-            </div>
-            <div id="well-lease-chart" class="intensity-chart"></div>
-            <div class="well-gatherers-section">
-                <div class="well-lease-header">Gatherers & Purchasers</div>
-                <div id="well-gatherers" class="gatherer-list loading-placeholder">Loading…</div>
-            </div>
-        </div>` : ''}
-    `);
+    openDetail(`Well ${p.api}`, p.latitude, p.longitude, [
+        card.fields(
+            ['Operator', p.operator_name || 'N/A'],
+            ['Type', p.oil_gas_code === 'O' ? 'Oil' : p.oil_gas_code === 'G' ? 'Gas' : p.oil_gas_code || 'N/A'],
+            ['District', p.lease_district || 'N/A'],
+            ['Well #', p.well_number || 'N/A'],
+        ),
+        hasLease && [
+            card.header(`Lease ${leaseName}`),
+            card.fields(
+                ['Gas flared (MCF)', flared > 0 ? flared.toLocaleString() : 'None reported'],
+                ['Gas produced (MCF)', produced > 0 ? produced.toLocaleString() : 'None reported'],
+                ['Flaring intensity', intensity],
+            ),
+            `<div id="well-lease-chart" class="intensity-chart"></div>`,
+            card.header('Gatherers & Purchasers'),
+            `<div id="well-gatherers" class="gatherer-list loading-placeholder">Loading\u2026</div>`,
+        ],
+    ]);
 
     if (hasLease) {
         db.queryLeaseMonthly(p.lease_district, p.lease_number).then(monthly => {
@@ -1163,7 +1246,7 @@ function showWellDetail(feature) {
             const current = rows.filter(r => r.is_current === '1');
             const currentKeys = new Set(current.map(r => r.type + '|' + r.gpn_name));
             const historical = rows.filter(r => r.is_current !== '1' && !currentKeys.has(r.type + '|' + r.gpn_name));
-            const fmtDate = d => d ? d.slice(0, 7) : '';  // YYYY-MM
+            const fmtDate = d => d ? d.slice(0, 7) : '';
             const renderRows = (list) => list.map(r => {
                 const parts = [r.type];
                 if (r.percentage) parts.push(r.percentage + '%');
@@ -1184,18 +1267,27 @@ function showWellDetail(feature) {
     }
 }
 
+function showInfraDetail(feature) {
+    const p = feature.properties;
+    openDetail(p.facility_name || 'Facility', p.latitude, p.longitude, [
+        card.fields(
+            ['Serial #', p.serial_number],
+            p.plant_type && ['Type', p.plant_type],
+        ),
+    ]);
+}
 
 function showEnhanceDetail(feature) {
     const p = feature.properties;
-    updateFlareUrl(p.flare_id, 's2');
-    activateSelection(Number(p.lon), Number(p.lat), { flareId: p.flare_id });
+    updateHash({ vnf: p.flare_id, mode: 's2' });
+    activateSelection({ flareId: p.flare_id });
 
-    openDetail(`Sentinel-2 · Flare ${p.flare_id}`, p.lat, p.lon, `
-        <div id="s2-stop-section">
+    openDetail(`Sentinel-2 · Flare ${p.flare_id}`, p.lat, p.lon, [
+        `<div id="s2-stop-section">
             <button class="btn-action stop-analysis-btn" id="s2-stop-btn">Stop Analysis</button>
-        </div>
-        <div id="s2-cluster-list"></div>
-    `);
+        </div>`,
+        card.section('s2-cluster-list'),
+    ]);
     $('s2-stop-btn').addEventListener('click', () => {
         cancelEnhance(map);
         $('s2-stop-section').innerHTML = '';
@@ -1207,7 +1299,6 @@ function showEnhanceDetail(feature) {
     badge.classList.remove('hidden');
     $('overlap-nav').classList.add('hidden');
 
-    // Wire up live updates before starting (cache path fires synchronously)
     setUpdateCallback((s) => {
         const s2b = $('s2-badge');
         if (!s2b) return;
@@ -1221,10 +1312,8 @@ function showEnhanceDetail(feature) {
             s2b.textContent = 'Failed';
         }
 
-        // Hide stop button when done
         if (!s.enhancing) $('s2-stop-section')?.replaceChildren();
 
-        // Update cluster list (live during enhancement and on completion)
         if (s.clusters?.length) {
             if (!s.enhancing) {
                 s2b.textContent = `${s.clusters.length} source${s.clusters.length !== 1 ? 's' : ''}`;
@@ -1232,12 +1321,12 @@ function showEnhanceDetail(feature) {
             const list = $('s2-cluster-list');
             if (list) {
                 list.className = 'enhance-results';
-                list.innerHTML = s.clusters.map(c => {
-                    return `<div class="enhance-cluster" data-id="${c.id}">
+                list.innerHTML = s.clusters.map(c =>
+                    `<div class="enhance-cluster" data-id="${c.id}">
                         <span class="cluster-dot" style="background:${b12Color(c.max_b12)}"></span>
                         B12 ${c.max_b12.toFixed(2)} · ${c.detection_count} det · ${c.first_date}${c.first_date !== c.last_date ? ` – ${c.last_date}` : ''}
-                    </div>`;
-                }).join('');
+                    </div>`
+                ).join('');
                 list.querySelectorAll('.enhance-cluster').forEach(el => {
                     el.addEventListener('click', () => {
                         const cluster = getCluster(el.dataset.id);
@@ -1251,16 +1340,14 @@ function showEnhanceDetail(feature) {
         }
     });
 
-    // Start enhancement (may resolve from cache synchronously)
     enhance(feature, map);
 }
 
 function showS2ClusterDetail(cluster) {
     closeS2Pixels();
-    updateS2Url(cluster.id);
-    activateSelection(cluster.lon, cluster.lat, { flareId: cluster.flare_id });
+    updateHash({ s2: cluster.id });
+    activateSelection({ flareId: cluster.flare_id });
 
-    // Build detection event list (sorted newest first)
     const dets = (cluster.detections || []).slice().sort((a, b) => b.date.localeCompare(a.date));
     const eventListHtml = dets.map(d => `<div class="s2-event-item" data-date="${d.date}">
             <span class="s2-event-dot" style="background:${b12Color(d.max_b12)}"></span>
@@ -1268,45 +1355,36 @@ function showS2ClusterDetail(cluster) {
             <span class="s2-event-b12">B12 ${d.max_b12.toFixed(2)}</span>
         </div>`).join('');
 
-    openDetail(`S2 Source ${cluster.id}`, cluster.lat, cluster.lon, `
-        <div class="stats-grid">
-            <div class="stat"><div class="stat-big">${cluster.max_b12.toFixed(2)}</div><div class="stat-unit">peak B12</div></div>
-            <div class="stat"><div class="stat-big">${cluster.avg_b12.toFixed(2)}</div><div class="stat-unit">mean B12</div></div>
-        </div>
-        <div class="detail-row">
-            ${field('First detected', formatDate(cluster.first_date))}
-            ${field('Last detected', formatDate(cluster.last_date))}
-        </div>
-        <div id="s2-permit-section"></div>
-        <div id="s2-event-list" class="s2-event-list">${eventListHtml}</div>
-    `);
+    openDetail(`S2 Source ${cluster.id}`, cluster.lat, cluster.lon, [
+        card.stats([
+            { value: cluster.max_b12.toFixed(2), unit: 'peak B12' },
+            { value: cluster.avg_b12.toFixed(2), unit: 'mean B12' },
+        ]),
+        card.fields(
+            ['First detected', formatDate(cluster.first_date)],
+            ['Last detected', formatDate(cluster.last_date)],
+        ),
+        card.section('s2-permit-section'),
+        `<div id="s2-event-list" class="s2-event-list">${eventListHtml}</div>`,
+    ]);
     const badge = $('detail-badge');
     badge.className = 'status-badge s2';
     badge.textContent = `${cluster.detection_count} det`;
     badge.classList.remove('hidden');
     $('overlap-nav').classList.add('hidden');
 
-    // Bind click handlers for event items — fetch COG on demand via STAC
     document.querySelectorAll('.s2-event-item').forEach(el => {
         el.addEventListener('click', async () => {
             const date = el.dataset.date;
-            // Build tight bbox around cluster location
             const dLat = 400 * LAT_PER_M;
-            const dLon = 400 * lonPerM(cluster.lat);
+            const dLon = 400 * LON_PER_M(cluster.lat);
             const bbox = [cluster.lon - dLon, cluster.lat - dLat, cluster.lon + dLon, cluster.lat + dLat];
 
             el.classList.add('loading');
             try {
-                // Find STAC item for this date
                 let item = null;
-                for await (const it of searchSTAC(bbox, date, date)) {
-                    item = it;
-                    break; // first match is enough
-                }
-                if (!item?.bands?.b12 || !item.epsg) {
-                    el.classList.remove('loading');
-                    return;
-                }
+                for await (const it of searchSTAC(bbox, date, date)) { item = it; break; }
+                if (!item?.bands?.b12 || !item.epsg) { el.classList.remove('loading'); return; }
                 await loadS2Pixels({ date, cog_b12: item.bands.b12, epsg: item.epsg }, cluster.lon, cluster.lat);
             } catch (err) {
                 console.error('STAC lookup failed:', err);
@@ -1315,12 +1393,8 @@ function showS2ClusterDetail(cluster) {
         });
     });
 
-    // Timeline chart from cluster detections
-    if (cluster.detections?.length) {
-        renderS2Chart(cluster.detections);
-    }
+    if (cluster.detections?.length) renderS2Chart(cluster.detections);
 
-    // Operator attribution — facility match takes precedence
     const dates = (cluster.detections || []).map(d => d.date).filter(Boolean).sort();
     const firstDate = dates[0] || null, lastDate = dates[dates.length - 1] || null;
     Promise.all([
@@ -1329,28 +1403,8 @@ function showS2ClusterDetail(cluster) {
         db.queryPermitFilings(cluster.lat, cluster.lon),
     ]).then(([facs, op, filings]) => {
         const el = $('s2-permit-section');
-        if (!el) return;
-        if (facs.length > 0) {
-            const f = facs[0];
-            el.innerHTML = `
-                <div class="detail-row">
-                    ${field('Facility', f.facility_name)}
-                    ${field('Type', f.plant_type)}
-                    ${field('Distance', (f.distance_km * 1000).toFixed(0) + 'm')}
-                </div>
-                <div class="detail-row">
-                    ${firstDate ? field('First detected', formatDate(firstDate)) : ''}
-                    ${lastDate ? field('Last detected', formatDate(lastDate)) : ''}
-                </div>
-            `;
-        } else {
-            const info = operatorInfo(op);
-            const coverage = computeCoverage(filings, firstDate, lastDate);
-            el.innerHTML = permitCoverageHtml(info, coverage, firstDate, lastDate);
-        }
+        if (el) el.innerHTML = attributionHtml(facs, op, filings, firstDate, lastDate);
     }).catch(() => {});
-
-    panel.classList.remove('hidden');
 }
 
 // Shared timeline chart builder
@@ -1374,7 +1428,6 @@ function renderTimeline(detections, { valueKey, colorFn, scaleFn, gridStyle = 'm
 
     if (gridStyle === 'months') {
         // Month gridlines with labels
-        const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
         const charW = 5, minGap = 30;
         const startD = new Date(minDate), endD = new Date(maxDate);
         const startX = M.left, endX = width - M.right;
@@ -1457,7 +1510,6 @@ function renderLeaseChartIn(container, monthly) {
     let svg = `<svg viewBox="0 0 ${width} ${height}">`;
     svg += `<line x1="${M.left}" y1="${chartH - M.bottom}" x2="${width - M.right}" y2="${chartH - M.bottom}" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>`;
 
-    const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     const startD = new Date(minDate), endD = new Date(maxDate);
     const firstYear = startD.getFullYear(), lastYear = endD.getFullYear();
 

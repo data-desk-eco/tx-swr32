@@ -19,6 +19,8 @@ from pathlib import Path
 import requests
 from bs4 import BeautifulSoup
 
+from rrc_common import get_viewstate
+
 BASE = "https://webapps.rrc.state.tx.us/swr32/publicquery.xhtml"
 DETAIL = "https://webapps.rrc.state.tx.us/swr32/pbfiling.xhtml?action=open"
 WORKERS = 8
@@ -31,14 +33,6 @@ progress = {"done": 0, "html": 0, "attachments": 0, "errors": 0, "total": 0, "st
 
 def log(msg: str):
     print(msg, flush=True)
-
-
-def get_viewstate(text: str) -> str:
-    m = re.search(r'name="javax\.faces\.ViewState"[^/]*value="([^"]*)"', text)
-    if m:
-        return m.group(1)
-    m = re.search(r'javax\.faces\.ViewState:0">(.*?)]]', text)
-    return m.group(1).replace("<![CDATA[", "") if m else ""
 
 
 def find_view_button(search_xml: str) -> str | None:

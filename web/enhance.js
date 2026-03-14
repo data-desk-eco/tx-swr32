@@ -15,6 +15,12 @@ function clusterHash(lat, lon) {
     return (h >>> 0).toString(36);
 }
 
+function ensureClusterId(c) { ensureClusterId(c); }
+
+function inBbox(d, bbox) {
+    return d.lon >= bbox[0] && d.lon <= bbox[2] && d.lat >= bbox[1] && d.lat <= bbox[3];
+}
+
 function cacheKey(flareId) { return CACHE_PREFIX + flareId; }
 
 function saveCache(flareId, detections, clusters, processedDates, complete = false) {
@@ -58,7 +64,7 @@ export function loadAllCached() {
             const clusters = cached.clusters || [];
             for (const c of clusters) {
                 // Backfill id for old cache entries that predate cluster hashing
-                if (!c.id) c.id = clusterHash(c.lat, c.lon);
+                ensureClusterId(c);
                 const enriched = { ...c, flare_id: Number(flareId) };
                 all.push(enriched);
                 clusterIndex.set(enriched.id, enriched);
@@ -117,8 +123,9 @@ export function enhance(flare, map) {
     const lat = Number(p.lat);
 
     // 750m pixel bbox (same math as flarePixelData in app.js)
-    const dLat = 375 / 110540;
-    const dLon = 375 / (111320 * Math.cos(lat * Math.PI / 180));
+    const HALF_PIXEL_M = 375;
+    const dLat = HALF_PIXEL_M / 110540;
+    const dLon = HALF_PIXEL_M / (111320 * Math.cos(lat * Math.PI / 180));
     const bbox = [lon - dLon, lat - dLat, lon + dLon, lat + dLat];
 
     // Zoom to pixel square
@@ -129,7 +136,7 @@ export function enhance(flare, map) {
     if (cached?.complete && cached?.clusters) {
         // Backfill ids for old cache entries
         for (const c of cached.clusters) {
-            if (!c.id) c.id = clusterHash(c.lat, c.lon);
+            ensureClusterId(c);
         }
         state = { enhancing: false, progress: null, detections: cached.detections, clusters: cached.clusters, error: null };
         refreshS2Source(map);
@@ -142,14 +149,15 @@ export function enhance(flare, map) {
     const cachedClusters = cached?.clusters || null;
     if (cachedClusters) {
         for (const c of cachedClusters) {
-            if (!c.id) c.id = clusterHash(c.lat, c.lon);
+            ensureClusterId(c);
         }
     }
     const processedDates = new Set(cached?.processedDates || []);
 
     const end = p.last_detected;
     // Cap to last year to keep image count manageable
-    const oneYearBefore = new Date(new Date(end).getTime() - 365 * 86400000).toISOString().slice(0, 10);
+    const ONE_YEAR_MS = 365 * 86400000;
+    const oneYearBefore = new Date(new Date(end).getTime() - ONE_YEAR_MS).toISOString().slice(0, 10);
     const start = p.first_detected > oneYearBefore ? p.first_detected : oneYearBefore;
 
     state = { enhancing: true, progress: { done: 0, total: null }, detections: [...cachedDetections], clusters: cachedClusters, error: null };
@@ -164,8 +172,7 @@ export function enhance(flare, map) {
         switch (msg.type) {
             case 'detections':
                 // Clip to request bbox and append
-                const clipped = msg.features.filter(d =>
-                    d.lon >= bbox[0] && d.lon <= bbox[2] && d.lat >= bbox[1] && d.lat <= bbox[3]);
+                const clipped = msg.features.filter(d => inBbox(d, bbox));
                 state.detections.push(...clipped);
                 onUpdate?.(state);
                 break;
@@ -182,8 +189,7 @@ export function enhance(flare, map) {
                 break;
 
             case 'clusters':
-                state.clusters = msg.features.filter(c =>
-                    c.lon >= bbox[0] && c.lon <= bbox[2] && c.lat >= bbox[1] && c.lat <= bbox[3]);
+                state.clusters = msg.features.filter(c => inBbox(c, bbox));
                 refreshS2Source(map);
                 onUpdate?.(state);
                 break;

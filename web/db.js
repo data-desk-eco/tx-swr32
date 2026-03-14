@@ -4,6 +4,20 @@ let _initPromise = null;
 const _loaded = new Set();
 const _loading = new Map();
 
+const MATCH_RADIUS_KM = 0.375;
+const BBOX_DELTA = 0.0034; // ~375m in degrees latitude
+
+// Reusable SQL fragment for great-circle distance (km) between two lat/lon pairs
+function distSql(latA, lonA, latB, lonB) {
+    return `111.32 * sqrt(power((${latA} - ${latB}) * cos(radians(${latB})), 2) + power(${lonA} - ${lonB}, 2))`;
+}
+
+// Reusable SQL fragment for bounding-box pre-filter
+function bboxSql(latCol, lonCol, lat, lon) {
+    return `${latCol} BETWEEN ${lat} - ${BBOX_DELTA} AND ${lat} + ${BBOX_DELTA}
+             AND ${lonCol} BETWEEN ${lon} - (${BBOX_DELTA} / cos(radians(${lat}))) AND ${lon} + (${BBOX_DELTA} / cos(radians(${lat})))`;
+}
+
 // Tier 0: needed for first paint (37K flares)
 // Tier 1: visible layers loaded right after first paint (198K + 165K)
 // Tier 2: deferred until first query (7MB wells, 670K detections, 42K leases, 2.9MB lease_monthly)
@@ -73,48 +87,30 @@ export async function buildOperatorIndex() {
 
 async function _buildOperatorIndex() {
     await need('permits', 'wells');
-    // Pre-compute operator attribution for all flares (permits+wells scoring)
+    const dist = distSql('p.latitude', 'p.longitude', 'f.lat', 'f.lon');
+    const wDist = distSql('w.latitude', 'w.longitude', 'f.lat', 'f.lon');
     await conn.query(`
         CREATE TABLE IF NOT EXISTS flare_operators AS
         WITH permit_ops AS (
             SELECT f.flare_id, p.operator_name, 'permit' AS source,
                 COUNT(DISTINCT p.name) AS n_records,
-                MIN(111.32 * sqrt(
-                    power((p.latitude - f.lat) * cos(radians(f.lat)), 2) +
-                    power(p.longitude - f.lon, 2)
-                )) AS min_distance_km,
-                FIRST(p.name ORDER BY 111.32 * sqrt(
-                    power((p.latitude - f.lat) * cos(radians(f.lat)), 2) +
-                    power(p.longitude - f.lon, 2)
-                )) AS nearest_permit_name
+                MIN(${dist}) AS min_distance_km,
+                FIRST(p.name ORDER BY ${dist}) AS nearest_permit_name
             FROM 'flares.parquet' f
             JOIN 'permits.parquet' p
-              ON p.latitude BETWEEN f.lat - 0.0034 AND f.lat + 0.0034
-             AND p.longitude BETWEEN f.lon - (0.0034 / cos(radians(f.lat)))
-                                 AND f.lon + (0.0034 / cos(radians(f.lat)))
-            WHERE 111.32 * sqrt(
-                power((p.latitude - f.lat) * cos(radians(f.lat)), 2) +
-                power(p.longitude - f.lon, 2)
-            ) <= 0.375
+              ON ${bboxSql('p.latitude', 'p.longitude', 'f.lat', 'f.lon')}
+            WHERE ${dist} <= ${MATCH_RADIUS_KM}
             GROUP BY 1, 2
         ),
         well_ops AS (
             SELECT f.flare_id, w.operator_name, 'well' AS source,
                 COUNT(DISTINCT w.api) AS n_records,
-                MIN(111.32 * sqrt(
-                    power((w.latitude - f.lat) * cos(radians(f.lat)), 2) +
-                    power(w.longitude - f.lon, 2)
-                )) AS min_distance_km
+                MIN(${wDist}) AS min_distance_km
             FROM 'flares.parquet' f
             JOIN 'wells.parquet' w
-              ON w.latitude BETWEEN f.lat - 0.0034 AND f.lat + 0.0034
-             AND w.longitude BETWEEN f.lon - (0.0034 / cos(radians(f.lat)))
-                                 AND f.lon + (0.0034 / cos(radians(f.lat)))
+              ON ${bboxSql('w.latitude', 'w.longitude', 'f.lat', 'f.lon')}
             WHERE w.operator_name IS NOT NULL
-              AND 111.32 * sqrt(
-                power((w.latitude - f.lat) * cos(radians(f.lat)), 2) +
-                power(w.longitude - f.lon, 2)
-            ) <= 0.375
+              AND ${wDist} <= ${MATCH_RADIUS_KM}
             GROUP BY 1, 2
         ),
         all_ops AS (
@@ -270,25 +266,18 @@ export async function queryPermits({ operator } = {}) {
     };
 }
 
-export async function queryPermitFilings(lat, lon, { radiusKm = 0.375, name, operator } = {}) {
+export async function queryPermitFilings(lat, lon, { radiusKm = MATCH_RADIUS_KM, name, operator } = {}) {
     await need('permits');
-    const { dLat, dLon } = bboxDeltas(lat, radiusKm);
-    let where = `latitude BETWEEN ${lat - dLat} AND ${lat + dLat}
-          AND longitude BETWEEN ${lon - dLon} AND ${lon + dLon}
-          AND 111.32 * sqrt(
-              power((latitude - ${lat}) * cos(radians(${lat})), 2) +
-              power(longitude - (${lon}), 2)
-          ) <= ${radiusKm}`;
+    const dist = distSql('latitude', 'longitude', lat, lon);
+    const bbox = bboxSql('latitude', 'longitude', lat, lon);
+    let where = `${bbox} AND ${dist} <= ${radiusKm}`;
     if (name) where += ` AND name = '${name.replace(/'/g, "''")}'`;
     if (operator) where += ` AND operator_name = '${operator.replace(/'/g, "''")}'`;
     const result = await query(`
         SELECT filing_no, name, operator_name, district, county, release_type,
             status, effective_dt, expiration_dt, release_rate_mcf_day,
             exception_reasons, latitude, longitude,
-            111.32 * sqrt(
-                power((latitude - ${lat}) * cos(radians(${lat})), 2) +
-                power(longitude - (${lon}), 2)
-            ) AS distance_km
+            ${dist} AS distance_km
         FROM 'permits.parquet'
         WHERE ${where}
         ORDER BY effective_dt
@@ -313,43 +302,25 @@ export async function queryOperator(flareId, lat, lon) {
 
 export async function queryOperatorByLocation(lat, lon) {
     await need('permits', 'wells');
-    const { dLat, dLon } = bboxDeltas(lat, 0.375);
+    const dist = distSql('latitude', 'longitude', lat, lon);
+    const bbox = bboxSql('latitude', 'longitude', lat, lon);
     const result = await query(`
         WITH permit_ops AS (
             SELECT operator_name, 'permit' AS source,
                 COUNT(DISTINCT name) AS n_records,
-                MIN(111.32 * sqrt(
-                    power((latitude - ${lat}) * cos(radians(${lat})), 2) +
-                    power(longitude - (${lon}), 2)
-                )) AS min_distance_km,
-                FIRST(name ORDER BY 111.32 * sqrt(
-                    power((latitude - ${lat}) * cos(radians(${lat})), 2) +
-                    power(longitude - (${lon}), 2)
-                )) AS nearest_permit_name
+                MIN(${dist}) AS min_distance_km,
+                FIRST(name ORDER BY ${dist}) AS nearest_permit_name
             FROM 'permits.parquet'
-            WHERE latitude BETWEEN ${lat - dLat} AND ${lat + dLat}
-              AND longitude BETWEEN ${lon - dLon} AND ${lon + dLon}
-              AND 111.32 * sqrt(
-                  power((latitude - ${lat}) * cos(radians(${lat})), 2) +
-                  power(longitude - (${lon}), 2)
-              ) <= 0.375
+            WHERE ${bbox} AND ${dist} <= ${MATCH_RADIUS_KM}
             GROUP BY operator_name
         ),
         well_ops AS (
             SELECT operator_name, 'well' AS source,
                 COUNT(DISTINCT api) AS n_records,
-                MIN(111.32 * sqrt(
-                    power((latitude - ${lat}) * cos(radians(${lat})), 2) +
-                    power(longitude - (${lon}), 2)
-                )) AS min_distance_km
+                MIN(${dist}) AS min_distance_km
             FROM 'wells.parquet'
-            WHERE latitude BETWEEN ${lat - dLat} AND ${lat + dLat}
-              AND longitude BETWEEN ${lon - dLon} AND ${lon + dLon}
-              AND operator_name IS NOT NULL
-              AND 111.32 * sqrt(
-                  power((latitude - ${lat}) * cos(radians(${lat})), 2) +
-                  power(longitude - (${lon}), 2)
-              ) <= 0.375
+            WHERE ${bbox} AND operator_name IS NOT NULL
+              AND ${dist} <= ${MATCH_RADIUS_KM}
             GROUP BY operator_name
         ),
         all_ops AS (
@@ -409,25 +380,39 @@ export async function queryNearbyPermits(lat, lon, radiusKm = 0.75) {
     return rows(result);
 }
 
-export async function queryNearestPermit(lat, lon, radiusKm = 0.375) {
+export async function queryNearestPermit(lat, lon, radiusKm = MATCH_RADIUS_KM) {
     await need('permits');
-    const { dLat, dLon } = bboxDeltas(lat, radiusKm);
+    const dist = distSql('latitude', 'longitude', lat, lon);
+    const bbox = bboxSql('latitude', 'longitude', lat, lon);
     const result = await query(`
         SELECT name, operator_name, district, county, release_type,
             effective_dt, expiration_dt,
             latitude, longitude,
-            111.32 * sqrt(
-                power((latitude - ${lat}) * cos(radians(${lat})), 2) +
-                power(longitude - (${lon}), 2)
-            ) AS distance_km
+            ${dist} AS distance_km
         FROM 'permits.parquet'
-        WHERE latitude BETWEEN ${lat - dLat} AND ${lat + dLat}
-          AND longitude BETWEEN ${lon - dLon} AND ${lon + dLon}
+        WHERE ${bbox}
         ORDER BY distance_km
         LIMIT 1
     `);
     const r = rows(result);
     return r.length > 0 ? r[0] : null;
+}
+
+export async function queryFacilities() {
+    await need('facilities');
+    const result = await query(`
+        SELECT serial_number, facility_name, plant_type, latitude, longitude
+        FROM 'facilities.parquet'
+    `);
+    const data = rows(result);
+    return {
+        type: 'FeatureCollection',
+        features: data.map(r => ({
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: [Number(r.longitude), Number(r.latitude)] },
+            properties: r
+        }))
+    };
 }
 
 export async function queryPlumes() {
@@ -452,19 +437,14 @@ export async function queryPlumes() {
 export async function queryNearbyFacilities(lat, lon, radiusKm = 5) {
     await need('facilities');
     const { dLat, dLon } = bboxDeltas(lat, radiusKm);
+    const dist = distSql('latitude', 'longitude', lat, lon);
     const result = await query(`
         SELECT serial_number, facility_name, plant_type, latitude, longitude,
-            111.32 * sqrt(
-                power((latitude - ${lat}) * cos(radians(${lat})), 2) +
-                power(longitude - (${lon}), 2)
-            ) AS distance_km
+            ${dist} AS distance_km
         FROM 'facilities.parquet'
         WHERE latitude BETWEEN ${lat - dLat} AND ${lat + dLat}
           AND longitude BETWEEN ${lon - dLon} AND ${lon + dLon}
-          AND 111.32 * sqrt(
-              power((latitude - ${lat}) * cos(radians(${lat})), 2) +
-              power(longitude - (${lon}), 2)
-          ) <= ${radiusKm}
+          AND ${dist} <= ${radiusKm}
         ORDER BY distance_km
     `);
     return rows(result);
@@ -479,7 +459,7 @@ export async function queryGatherers(leaseDistrict, leaseNumber) {
         FROM 'gatherers.parquet'
         WHERE district = '${ld}'
           AND lease_number = LPAD('${ln}', 6, '0')
-        ORDER BY is_current DESC, type, percentage DESC
+        ORDER BY is_current DESC, last_date DESC NULLS LAST, type, percentage DESC
     `);
     return rows(result);
 }

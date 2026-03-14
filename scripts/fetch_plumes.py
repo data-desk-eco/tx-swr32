@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Fetch methane plume data from Carbon Mapper API and IMEO/UNEP GeoJSON."""
 
 import csv

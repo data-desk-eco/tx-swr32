@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Fetch RRC R-3 gas processing plant data and extract facility locations.
 
 Downloads all available monthly R-3 JSON files and unions the facilities

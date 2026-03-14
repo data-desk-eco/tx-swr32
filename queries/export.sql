@@ -7,6 +7,9 @@ SET VARIABLE lon_min = -104.5;
 SET VARIABLE lon_max = -100.0;
 SET VARIABLE nm_border_lon = -103.064;  -- TX-NM border longitude (above 32°N)
 
+-- Normalize lease numbers to 6-digit zero-padded strings
+CREATE OR REPLACE MACRO normalize_lease(n) AS LPAD(n, 6, '0');
+
 -- Reusable Permian bbox filter (lat, lon columns vary by table)
 CREATE OR REPLACE MACRO in_permian(lat, lon) AS
     lat BETWEEN getvariable('lat_min') AND getvariable('lat_max')
@@ -87,7 +90,7 @@ SELECT f.district, f.lease_number,
 FROM flared f
 LEFT JOIN produced p
     ON p.district = f.district
-    AND LPAD(p.lease_number, 6, '0') = LPAD(f.lease_number, 6, '0');
+    AND normalize_lease(p.lease_number) = normalize_lease(f.lease_number);
 
 -- Leases parquet (flare ↔ lease matches via nearby wells within 375m)
 COPY (
@@ -111,7 +114,7 @@ COPY (
     ) wc USING (oil_gas_code, lease_district, lease_number)
     LEFT JOIN lease_production lp
         ON lp.district = fl.lease_district
-        AND LPAD(lp.lease_number, 6, '0') = LPAD(fl.lease_number, 6, '0')
+        AND normalize_lease(lp.lease_number) = normalize_lease(fl.lease_number)
 ) TO 'web/data/leases.parquet' (FORMAT PARQUET, COMPRESSION ZSTD);
 
 -- Lease monthly production time series (for sparklines in well detail cards)
@@ -126,7 +129,7 @@ COPY (
     FROM rrc.production p
     JOIN lease_production lp
         ON lp.district = p.district
-        AND LPAD(lp.lease_number, 6, '0') = LPAD(p.lease_number, 6, '0')
+        AND normalize_lease(lp.lease_number) = normalize_lease(p.lease_number)
     WHERE p.district IN ('6E','7B','7C','08','8A')
       AND lp.total_flared_mcf > 0
       AND make_date(p.year, p.month, 1) >= getvariable('start_date')
@@ -179,7 +182,7 @@ COPY (
     LEFT JOIN raw.operators o ON o.operator_number = w.operator_no
     LEFT JOIN lease_production lp
         ON lp.district = w.lease_district
-        AND LPAD(lp.lease_number, 6, '0') = LPAD(w.lease_number, 6, '0')
+        AND normalize_lease(lp.lease_number) = normalize_lease(w.lease_number)
     WHERE w.latitude != 0 AND w.longitude != 0
         AND in_permian(w.latitude, w.longitude)
 ) TO 'web/data/wells.parquet' (FORMAT PARQUET, COMPRESSION ZSTD);
@@ -187,7 +190,7 @@ COPY (
 -- Gatherer/purchaser/nominator parquet (deduplicated per lease×type×name×current)
 COPY (
     SELECT
-        g.oil_gas_code, g.district, LPAD(g.lease_rrcid::VARCHAR, 6, '0') AS lease_number,
+        g.oil_gas_code, g.district, normalize_lease(g.lease_rrcid::VARCHAR) AS lease_number,
         CASE g.type_code WHEN 'G' THEN 'Gatherer' WHEN 'H' THEN 'Purchaser' WHEN 'I' THEN 'Nominator' ELSE g.type_code END AS type,
         MAX(round(g.percentage * 100, 2)) AS percentage,
         g.gpn_number,
@@ -196,7 +199,7 @@ COPY (
         MIN(NULLIF(g.effective_date, '')) AS first_date,
         MAX(NULLIF(g.effective_date, '')) AS last_date
     FROM raw.gatherers g
-    LEFT JOIN raw.operators o ON LPAD(o.operator_number::VARCHAR, 6, '0') = LPAD(g.gpn_number, 6, '0')
+    LEFT JOIN raw.operators o ON normalize_lease(o.operator_number::VARCHAR) = normalize_lease(g.gpn_number)
     WHERE g.district IN ('6E','7B','7C','08','8A')
     GROUP BY g.oil_gas_code, g.district, g.lease_rrcid, g.type_code, g.gpn_number, o.operator_name, g.is_current
 ) TO 'web/data/gatherers.parquet' (FORMAT PARQUET, COMPRESSION ZSTD);

@@ -18,6 +18,8 @@ from xml.etree import ElementTree as ET
 import requests
 from bs4 import BeautifulSoup
 
+from rrc_common import get_viewstate
+
 BASE = "https://webapps.rrc.state.tx.us/swr32/publicquery.xhtml"
 SEARCH_FROM = "01/01/2019"
 ROWS_PER_PAGE = 10
@@ -33,14 +35,6 @@ COLUMNS = [
 
 def log(msg: str):
     print(f"  {msg}", file=sys.stderr, flush=True)
-
-
-def get_viewstate(text: str) -> str:
-    m = re.search(r'name="javax\.faces\.ViewState"[^/]*value="([^"]*)"', text)
-    if m:
-        return m.group(1)
-    m = re.search(r'javax\.faces\.ViewState:0">(.*?)]]', text)
-    return m.group(1).replace("<![CDATA[", "") if m else ""
 
 
 def get_total(text: str) -> int:

@@ -71,7 +71,7 @@ vendor:
 	scripts/vendor.sh
 
 serve:
-	python3 -m http.server 8080 -d web
+	uv run python -m http.server 8080 -d web
 
 clean:
 	rm -f data/data.duckdb data/wells.csv data/operators.csv data/.rrc_downloaded data/r3_facilities.csv data/plumes_cm.csv data/plumes_imeo.csv
