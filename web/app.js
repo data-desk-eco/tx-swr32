@@ -8,6 +8,7 @@ import { wgs84ToUtm, utmToWgs84, utmParams } from './vendor/s2-flares/geo.js';
 // Boot screen log
 const _bootLog = document.getElementById('boot-log');
 const _bootScreen = document.getElementById('boot-screen');
+const _bootStatus = document.getElementById('boot-status');
 const _t0 = performance.now();
 
 function bootLog(msg) {
@@ -19,12 +20,17 @@ function bootLog(msg) {
     el.scrollIntoView({ block: 'end' });
 }
 
+function bootStatus(msg) {
+    if (_bootStatus) _bootStatus.textContent = msg ? `       ${msg}` : '';
+}
+
 function bootDone() {
     bootLog('READY');
     _bootScreen.remove();
 }
 
 db.onLog(bootLog);
+db.onStatus(bootStatus);
 bootLog('GASLIGHT — Permian Basin Flare Analysis System');
 bootLog('');
 
@@ -118,11 +124,14 @@ const map = new maplibregl.Map({
 
 // Start DuckDB init immediately — runs in parallel with map tile loading
 bootLog('init   duckdb wasm');
+bootStatus('loading duckdb wasm runtime...');
 const dbReady = db.init();
 bootLog('init   maplibre gl');
+bootStatus('waiting for map tiles...');
 
 map.on('load', async () => {
     bootLog('map    tiles loaded');
+    bootStatus('waiting for duckdb...');
     $('stat-sites').textContent = 'Loading...';
 
     await dbReady;
@@ -132,8 +141,10 @@ map.on('load', async () => {
     addLayers();
     bindUI();
     bootLog('query  flares.parquet');
+    bootStatus('querying flare sites...');
     await refreshFlares();
     bootLog(`render ${flareFeatures.length.toLocaleString()} flare sites`);
+    bootStatus('loading permits, plumes, wells...');
     // Tier 1: start loading permits + plumes in background
     db.loadTier1();
     loadPermits();

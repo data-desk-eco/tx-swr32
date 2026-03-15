@@ -4,7 +4,9 @@ let _initPromise = null;
 const _loaded = new Set();
 const _loading = new Map();
 let _log = () => {}; // boot log callback
+let _status = () => {}; // boot status callback
 export function onLog(fn) { _log = fn; }
+export function onStatus(fn) { _status = fn; }
 
 const MATCH_RADIUS_KM = 0.375;
 const BBOX_DELTA = 0.0034; // ~375m in degrees latitude
@@ -65,6 +67,7 @@ for (const name of TIER0) {
 }
 
 async function _init() {
+    _status('importing duckdb module...');
     _log('import duckdb-browser.mjs');
     const duckdb = await import('./vendor/duckdb/duckdb-browser.mjs');
     _log('import duckdb-browser.mjs done');
@@ -75,11 +78,14 @@ async function _init() {
     const workerBlob = new Blob([`importScripts("${mainWorker}");`], { type: 'text/javascript' });
     const worker = new Worker(URL.createObjectURL(workerBlob));
     db = new duckdb.AsyncDuckDB({ log: () => {} }, worker);
+    _status('downloading duckdb wasm (34 MB)...');
     _log('fetch  duckdb-eh.wasm (34 MB)');
     await db.instantiate(mainModule);
+    _status('starting wasm runtime...');
     _log('instantiate wasm runtime');
     conn = await db.connect();
     _log('connect to duckdb');
+    _status('loading flare data...');
     // Register prefetched tier 0 parquets (fetches started at module load)
     await Promise.all(TIER0.map(async n => {
         const buf = await _prefetched.get(n);
