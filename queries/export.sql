@@ -92,9 +92,23 @@ LEFT JOIN produced p
     ON p.district = f.district
     AND normalize_lease(p.lease_number) = normalize_lease(f.lease_number);
 
+-- Wells near flare sites (within 375m bbox pre-filter, reused by leases/wells/gatherers/lease_monthly)
+CREATE OR REPLACE TEMP TABLE flare_wells AS
+SELECT DISTINCT w.api, w.oil_gas_code, w.lease_district, w.lease_number
+FROM sites fs
+JOIN raw.wells w
+    ON w.longitude BETWEEN fs.lon - 0.0034 AND fs.lon + 0.0034
+    AND w.latitude BETWEEN fs.lat - 0.0034 AND fs.lat + 0.0034
+    AND w.latitude != 0 AND w.longitude != 0;
+
+-- Distinct leases linked to flare sites (for filtering large tables)
+CREATE OR REPLACE TEMP TABLE flare_leases AS
+SELECT DISTINCT lease_district, normalize_lease(lease_number) AS lease_number
+FROM flare_wells;
+
 -- Leases parquet (flare ↔ lease matches via nearby wells within 375m)
 COPY (
-    WITH flare_leases AS (
+    WITH fl AS (
         SELECT DISTINCT fs.flare_id, w.oil_gas_code, w.lease_district, w.lease_number
         FROM sites fs
         JOIN raw.wells w
@@ -107,7 +121,7 @@ COPY (
         COALESCE(wc.well_count, 0) AS well_count,
         round(COALESCE(lp.total_flared_mcf, 0), 0) AS reported_flared_mcf,
         lp.operator_name AS lease_operator, lp.lease_name
-    FROM flare_leases fl
+    FROM fl
     LEFT JOIN (
         SELECT oil_gas_code, lease_district, lease_number, count(*) AS well_count
         FROM raw.wells WHERE latitude != 0 GROUP BY 1, 2, 3
@@ -118,7 +132,7 @@ COPY (
 ) TO 'web/data/leases.parquet' (FORMAT PARQUET, COMPRESSION ZSTD);
 
 -- Lease monthly production time series (for sparklines in well detail cards)
--- Only for leases with reported flaring, filtered to start_date+
+-- Only for flare-linked leases with reported flaring, filtered to start_date+
 COPY (
     SELECT
         p.district AS lease_district, p.lease_number,
@@ -130,6 +144,9 @@ COPY (
     JOIN lease_production lp
         ON lp.district = p.district
         AND normalize_lease(lp.lease_number) = normalize_lease(p.lease_number)
+    SEMI JOIN flare_leases fl
+        ON fl.lease_district = p.district
+        AND fl.lease_number = normalize_lease(p.lease_number)
     WHERE p.district IN ('6E','7B','7C','08','8A')
       AND lp.total_flared_mcf > 0
       AND make_date(p.year, p.month, 1) >= getvariable('start_date')
@@ -167,7 +184,7 @@ COPY (
     WHERE in_permian(latitude, longitude)
 ) TO 'web/data/plumes.parquet' (FORMAT PARQUET, COMPRESSION ZSTD);
 
--- Wells parquet (with per-lease flaring metrics)
+-- Wells parquet (only wells near flare sites, with per-lease flaring metrics)
 COPY (
     SELECT w.api, w.oil_gas_code, w.lease_district, w.lease_number, w.well_number,
         COALESCE(o.operator_name, 'Unknown') AS operator_name,
@@ -179,6 +196,7 @@ COPY (
              ELSE NULL END AS flaring_intensity_pct,
         lp.lease_name
     FROM raw.wells w
+    SEMI JOIN flare_wells fw USING (api)
     LEFT JOIN raw.operators o ON o.operator_number = w.operator_no
     LEFT JOIN lease_production lp
         ON lp.district = w.lease_district
@@ -187,7 +205,7 @@ COPY (
         AND in_permian(w.latitude, w.longitude)
 ) TO 'web/data/wells.parquet' (FORMAT PARQUET, COMPRESSION ZSTD);
 
--- Gatherer/purchaser/nominator parquet (deduplicated per lease×type×name×current)
+-- Gatherer/purchaser/nominator parquet (only flare-linked leases, deduplicated per lease×type×name×current)
 COPY (
     SELECT
         g.oil_gas_code, g.district, normalize_lease(g.lease_rrcid::VARCHAR) AS lease_number,
@@ -199,6 +217,9 @@ COPY (
         MIN(NULLIF(g.effective_date, '')) AS first_date,
         MAX(NULLIF(g.effective_date, '')) AS last_date
     FROM raw.gatherers g
+    SEMI JOIN flare_leases fl
+        ON fl.lease_district = g.district
+        AND fl.lease_number = normalize_lease(g.lease_rrcid::VARCHAR)
     LEFT JOIN raw.operators o ON normalize_lease(o.operator_number::VARCHAR) = normalize_lease(g.gpn_number)
     WHERE g.district IN ('6E','7B','7C','08','8A')
     GROUP BY g.oil_gas_code, g.district, g.lease_rrcid, g.type_code, g.gpn_number, o.operator_name, g.is_current
