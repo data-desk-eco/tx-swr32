@@ -92,7 +92,7 @@ LEFT JOIN produced p
     ON p.district = f.district
     AND normalize_lease(p.lease_number) = normalize_lease(f.lease_number);
 
--- Wells near flare sites (within 375m bbox pre-filter, reused by leases/wells/gatherers/lease_monthly)
+-- Wells near flare sites (within 375m bbox pre-filter, reused by leases/wells/gatherers/production)
 CREATE OR REPLACE TEMP TABLE flare_wells AS
 SELECT DISTINCT w.api, w.oil_gas_code, w.lease_district, w.lease_number
 FROM sites fs
@@ -151,7 +151,7 @@ COPY (
       AND lp.total_flared_mcf > 0
       AND make_date(p.year, p.month, 1) >= getvariable('start_date')
     ORDER BY p.district, p.lease_number, p.year, p.month
-) TO 'web/data/lease_monthly.parquet' (FORMAT PARQUET, COMPRESSION ZSTD);
+) TO 'web/data/production.parquet' (FORMAT PARQUET, COMPRESSION ZSTD);
 
 -- Permits parquet (one row per filing, excludes gas plants)
 COPY (
