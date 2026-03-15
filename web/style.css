@@ -70,13 +70,6 @@ html, body { width: 100%; height: 100%; font-family: 'Inter', -apple-system, Bli
     margin-top: 2px;
     white-space: pre;
 }
-#boot-status::after {
-    content: '_';
-    animation: blink 0.8s step-end infinite;
-}
-@keyframes blink {
-    50% { opacity: 0; }
-}
 .maplibregl-ctrl, .maplibregl-ctrl-logo, .maplibregl-ctrl-attrib { display: none !important; }
 
 /* --- Base components --- */
