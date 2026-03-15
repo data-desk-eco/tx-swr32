@@ -10,24 +10,22 @@ const _bootLog = document.getElementById('boot-log');
 const _bootScreen = document.getElementById('boot-screen');
 const _t0 = performance.now();
 
-function bootLog(msg, cls) {
+function bootLog(msg) {
     if (!_bootLog) return;
     const el = document.createElement('span');
     const ts = ((performance.now() - _t0) / 1000).toFixed(2).padStart(6);
     el.textContent = `[${ts}s] ${msg}`;
-    if (cls) el.className = cls;
     _bootLog.appendChild(el);
     el.scrollIntoView({ block: 'end' });
 }
 
 function bootDone() {
-    bootLog('READY', 'ok');
-    _bootScreen.classList.add('done');
-    setTimeout(() => _bootScreen.remove(), 500);
+    bootLog('READY');
+    _bootScreen.remove();
 }
 
 db.onLog(bootLog);
-bootLog('GASLIGHT v1.0 — Permian Basin Flare Analysis System', 'head');
+bootLog('GASLIGHT — Permian Basin Flare Analysis System');
 bootLog('');
 
 const _css = k => getComputedStyle(document.documentElement).getPropertyValue(k).trim();
@@ -124,18 +122,18 @@ const dbReady = db.init();
 bootLog('init   maplibre gl');
 
 map.on('load', async () => {
-    bootLog('map    tiles loaded', 'ok');
+    bootLog('map    tiles loaded');
     $('stat-sites').textContent = 'Loading...';
 
     await dbReady;
-    bootLog('duckdb ready', 'ok');
+    bootLog('duckdb ready');
 
     addEmptySources();
     addLayers();
     bindUI();
     bootLog('query  flares.parquet');
     await refreshFlares();
-    bootLog(`render ${flareFeatures.length.toLocaleString()} flare sites`, 'ok');
+    bootLog(`render ${flareFeatures.length.toLocaleString()} flare sites`);
     // Tier 1: start loading permits + plumes in background
     db.loadTier1();
     loadPermits();

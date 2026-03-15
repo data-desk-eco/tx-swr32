@@ -39,7 +39,7 @@ async function _loadParquet(name) {
         _log(`fetch  data/${name}.parquet`);
         const resp = await fetch(`data/${name}.parquet`);
         const buf = await resp.arrayBuffer();
-        _log(`load   ${name}.parquet (${_fmtSize(buf.byteLength)})`, 'ok');
+        _log(`load   ${name}.parquet (${_fmtSize(buf.byteLength)})`);
         await db.registerFileBuffer(`${name}.parquet`, new Uint8Array(buf));
         _loaded.add(name);
     })();
@@ -67,7 +67,7 @@ for (const name of TIER0) {
 async function _init() {
     _log('import duckdb-browser.mjs');
     const duckdb = await import('./vendor/duckdb/duckdb-browser.mjs');
-    _log('import duckdb-browser.mjs', 'ok');
+    _log('import duckdb-browser.mjs done');
     const base = new URL('.', import.meta.url).href;
     const mainModule = base + 'vendor/duckdb/duckdb-eh.wasm';
     const mainWorker = base + 'vendor/duckdb/duckdb-browser-eh.worker.js';
@@ -77,13 +77,13 @@ async function _init() {
     db = new duckdb.AsyncDuckDB({ log: () => {} }, worker);
     _log('fetch  duckdb-eh.wasm (34 MB)');
     await db.instantiate(mainModule);
-    _log('instantiate wasm runtime', 'ok');
+    _log('instantiate wasm runtime');
     conn = await db.connect();
-    _log('connect to duckdb', 'ok');
+    _log('connect to duckdb');
     // Register prefetched tier 0 parquets (fetches started at module load)
     await Promise.all(TIER0.map(async n => {
         const buf = await _prefetched.get(n);
-        _log(`load   ${n}.parquet (${_fmtSize(buf.byteLength)})`, 'ok');
+        _log(`load   ${n}.parquet (${_fmtSize(buf.byteLength)})`);
         await db.registerFileBuffer(`${n}.parquet`, new Uint8Array(buf));
         _loaded.add(n);
     }));
