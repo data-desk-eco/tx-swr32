@@ -48,6 +48,12 @@ export async function init() {
     return _initPromise;
 }
 
+// Start fetching tier 0 parquets immediately (before WASM is even requested)
+const _prefetched = new Map();
+for (const name of TIER0) {
+    _prefetched.set(name, fetch(`data/${name}.parquet`).then(r => r.arrayBuffer()));
+}
+
 async function _init() {
     const duckdb = await import('./vendor/duckdb/duckdb-browser.mjs');
     const base = new URL('.', import.meta.url).href;
@@ -58,8 +64,12 @@ async function _init() {
     db = new duckdb.AsyncDuckDB({ log: () => {} }, worker);
     await db.instantiate(mainModule);
     conn = await db.connect();
-    // Only load tier 0 — flares paint immediately
-    await Promise.all(TIER0.map(n => _loadParquet(n)));
+    // Register prefetched tier 0 parquets (fetches started at module load)
+    await Promise.all(TIER0.map(async n => {
+        const buf = await _prefetched.get(n);
+        await db.registerFileBuffer(`${n}.parquet`, new Uint8Array(buf));
+        _loaded.add(n);
+    }));
 }
 
 // Load tier 1 files in background (call after first paint)
@@ -166,15 +176,23 @@ async function query(sql) {
 }
 
 function rows(result) {
-    const out = [];
-    for (let i = 0; i < result.numRows; i++) {
-        const row = result.get(i);
+    const n = result.numRows;
+    if (n === 0) return [];
+    const fields = result.schema.fields;
+    // Column-based extraction — reads each column array once instead of per-row proxy access
+    const columns = fields.map(f => {
+        const col = result.getChild(f.name);
+        const arr = col.toArray();
+        return { name: f.name, arr, bigint: arr.length > 0 && typeof arr[0] === 'bigint' };
+    });
+    const out = new Array(n);
+    for (let i = 0; i < n; i++) {
         const obj = {};
-        for (const field of result.schema.fields) {
-            const v = row[field.name];
-            obj[field.name] = typeof v === 'bigint' ? Number(v) : v;
+        for (const { name, arr, bigint } of columns) {
+            const v = arr[i];
+            obj[name] = bigint ? Number(v) : v;
         }
-        out.push(obj);
+        out[i] = obj;
     }
     return out;
 }

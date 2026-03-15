@@ -5,6 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>gaslight / upstream flaring in the permian</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22%3E%3Ccircle cx=%2250%22 cy=%2250%22 r=%2240%22 fill=%22%23e74c3c%22/%3E%3C/svg%3E">
+    <link rel="preload" href="vendor/duckdb/duckdb-eh.wasm" as="fetch" crossorigin>
+    <link rel="preload" href="vendor/duckdb/duckdb-browser-eh.worker.js" as="fetch" crossorigin>
+    <link rel="preload" href="data/flares.parquet" as="fetch" crossorigin>
+    <link rel="modulepreload" href="vendor/duckdb/duckdb-browser.mjs">
+    <link rel="modulepreload" href="vendor/duckdb/apache-arrow.mjs">
     <link rel="stylesheet" href="vendor/fonts/inter.css">
     <link rel="stylesheet" href="vendor/maplibre-gl.css">
     <link rel="stylesheet" href="style.css">

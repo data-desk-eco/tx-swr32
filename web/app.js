@@ -107,10 +107,12 @@ map.on('load', async () => {
     await refreshFlares();
     // Tier 1: start loading permits + plumes in background
     db.loadTier1();
-    await loadPermits();
+    loadPermits();
     loadCachedS2();
     updateMapCentre();
     handleDeepLink();
+    // Start building operator index in background (ready for first click)
+    db.buildOperatorIndex();
     // Stats use queryRenderedFeatures — wait for first idle after data loads
     map.once('idle', updateStats);
 
@@ -418,21 +420,34 @@ function flarePixelData(flareGeoJson) {
     };
 }
 
+let _pixelsBuilt = false;
+let _latestFlareData = null;
+
+function ensureFlarePixels() {
+    if (_pixelsBuilt || !_latestFlareData) return;
+    _pixelsBuilt = true;
+    const px = flarePixelData(_latestFlareData);
+    map.getSource('flare-pixels').setData(px.squares);
+    map.getSource('flare-pixel-labels').setData(px.labels);
+}
+
 async function refreshFlares() {
     const data = await db.queryFlares({ operator: operatorFilter || undefined });
     flareFeatures = data.features;
+    _latestFlareData = data;
+    _pixelsBuilt = false;
     map.getSource('flares').setData(data);
-    const px = flarePixelData(data);
-    map.getSource('flare-pixels').setData(px.squares);
-    map.getSource('flare-pixel-labels').setData(px.labels);
-    drawer.setData('flares', data.features);
+    // Pixel squares invisible until z13 — build lazily
+    if (map.getZoom() >= 12) ensureFlarePixels();
+    // Drawer population doesn't affect map paint — defer
+    setTimeout(() => drawer.setData('flares', data.features), 0);
 }
 
 async function loadPermits() {
     if (!layerState.permits) return;
     const data = await db.queryPermits({ operator: operatorFilter || undefined });
     map.getSource('permits').setData(data);
-    drawer.setData('permits', data.features);
+    setTimeout(() => drawer.setData('permits', data.features), 0);
 }
 
 async function loadPlumes() {
@@ -526,6 +541,9 @@ const ALL_CLICK_LAYERS = [
 ];
 
 function bindUI() {
+    // Build flare pixel squares lazily when user zooms in past z12
+    map.on('zoom', () => { if (map.getZoom() >= 12) ensureFlarePixels(); });
+
     $('collapse-toggle').addEventListener('click', () => {
         $('left-panel').classList.toggle('collapsed');
     });
@@ -1117,15 +1135,30 @@ function showFlareDetail(feature) {
     db.queryLeases(p.flare_id).then(leases => {
         const el = $('vnf-lease-section');
         if (!el || leases.length === 0) return;
-        el.innerHTML = leases.map(l => {
-            const name = l.lease_name || `${l.lease_district}-${l.lease_number}`;
-            const flared = Number(l.reported_flared_mcf) || 0;
-            return card.fields(
-                ['Lease', name],
-                l.lease_operator && ['Operator', l.lease_operator],
-                ['Wells', num(l.well_count)],
-                flared > 0 && ['Reported flared', flared.toLocaleString() + ' MCF'],
-            );
+        // Group leases by operator
+        const groups = new Map();
+        for (const l of leases) {
+            const op = l.lease_operator || 'Unknown operator';
+            if (!groups.has(op)) groups.set(op, []);
+            groups.get(op).push(l);
+        }
+        el.innerHTML = [...groups.entries()].map(([op, grp]) => {
+            const totalFlared = grp.reduce((s, l) => s + (Number(l.reported_flared_mcf) || 0), 0);
+            const totalWells = grp.reduce((s, l) => s + (Number(l.well_count) || 0), 0);
+            const leaseRows = grp.map(l => {
+                const name = l.lease_name || `${l.lease_district}-${l.lease_number}`;
+                const flared = Number(l.reported_flared_mcf) || 0;
+                return `<div class="gatherer-row">
+                    <span class="gatherer-name">${name}</span>
+                    <span class="gatherer-meta">${num(l.well_count)} wells${flared > 0 ? ' · ' + flared.toLocaleString() + ' MCF' : ''}</span>
+                </div>`;
+            }).join('');
+            return card.header(op) +
+                card.fields(
+                    ['Wells', num(totalWells)],
+                    totalFlared > 0 && ['Reported flared', totalFlared.toLocaleString() + ' MCF'],
+                ) +
+                `<div class="gatherer-list"><details class="gatherer-history"><summary>${grp.length} lease${grp.length > 1 ? 's' : ''}</summary>${leaseRows}</details></div>`;
         }).join('');
     }).catch(() => {});
 
