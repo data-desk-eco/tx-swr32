@@ -19,10 +19,10 @@ function bboxSql(latCol, lonCol, lat, lon) {
 }
 
 // Tier 0: needed for first paint (37K flares)
-// Tier 1: visible layers loaded right after first paint (198K + 165K)
-// Tier 2: deferred until first query (7MB wells, 670K detections, 42K leases, 2.9MB lease_monthly)
+// Tier 1: visible layers loaded right after first paint (~750K total)
+// Tier 2: deferred until first query (detections 667K, gatherers 308K, production 288K, leases 44K)
 const TIER0 = ['flares'];
-const TIER1 = ['permits', 'plumes', 'facilities'];
+const TIER1 = ['permits', 'plumes', 'facilities', 'wells'];
 
 async function _loadParquet(name) {
     if (_loaded.has(name)) return;
@@ -226,12 +226,12 @@ export async function queryLeases(flareId) {
 }
 
 export async function queryLeaseMonthly(leaseDistrict, leaseNumber) {
-    await need('lease_monthly');
+    await need('production');
     const ld = leaseDistrict.replace(/'/g, "''");
     const ln = String(leaseNumber).replace(/'/g, "''");
     const result = await query(`
         SELECT date, flared_mcf, produced_mcf
-        FROM 'lease_monthly.parquet'
+        FROM 'production.parquet'
         WHERE lease_district = '${ld}'
           AND lease_number = '${ln}'
         ORDER BY date
