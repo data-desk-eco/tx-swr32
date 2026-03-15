@@ -20,18 +20,29 @@ function bootLog(msg) {
     el.scrollIntoView({ block: 'end' });
 }
 
+let _statusTimer = 0;
 function bootStatus(msg) {
-    if (_bootStatus) _bootStatus.textContent = msg ? `       ${msg}` : '';
+    if (!_bootStatus) return;
+    clearInterval(_statusTimer);
+    if (!msg) { _bootStatus.textContent = ''; return; }
+    const t0status = performance.now();
+    const update = () => {
+        const ts = ((performance.now() - _t0) / 1000).toFixed(2).padStart(6);
+        _bootStatus.textContent = `[${ts}s] ${msg}`;
+    };
+    update();
+    _statusTimer = setInterval(update, 50);
 }
 
 function bootDone() {
+    clearInterval(_statusTimer);
     bootLog('READY');
     _bootScreen.remove();
 }
 
 db.onLog(bootLog);
 db.onStatus(bootStatus);
-bootLog('GASLIGHT — Permian Basin Flare Analysis System');
+bootLog('gaslight / upstream flaring in the permian');
 bootLog('');
 
 const _css = k => getComputedStyle(document.documentElement).getPropertyValue(k).trim();
