@@ -69,11 +69,10 @@ for (const name of TIER0) {
 async function _init() {
     _status('importing duckdb module...');
     _log('import duckdb-browser.mjs');
-    const duckdb = await import('./vendor/duckdb/duckdb-browser.mjs');
+    const duckdb = await import('https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.29.0/+esm');
     _log('import duckdb-browser.mjs done');
-    const base = new URL('.', import.meta.url).href;
-    const mainModule = base + 'vendor/duckdb/duckdb-eh.wasm';
-    const mainWorker = base + 'vendor/duckdb/duckdb-browser-eh.worker.js';
+    const mainModule = 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.29.0/dist/duckdb-eh.wasm';
+    const mainWorker = 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.29.0/dist/duckdb-browser-eh.worker.js';
     _log('spawn  duckdb worker');
     const workerBlob = new Blob([`importScripts("${mainWorker}");`], { type: 'text/javascript' });
     const worker = new Worker(URL.createObjectURL(workerBlob));
