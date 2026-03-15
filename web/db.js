@@ -3,6 +3,8 @@ let conn = null;
 let _initPromise = null;
 const _loaded = new Set();
 const _loading = new Map();
+let _log = () => {}; // boot log callback
+export function onLog(fn) { _log = fn; }
 
 const MATCH_RADIUS_KM = 0.375;
 const BBOX_DELTA = 0.0034; // ~375m in degrees latitude
@@ -24,12 +26,20 @@ function bboxSql(latCol, lonCol, lat, lon) {
 const TIER0 = ['flares'];
 const TIER1 = ['permits', 'plumes', 'facilities', 'wells'];
 
+function _fmtSize(bytes) {
+    return bytes < 1024 ? bytes + ' B'
+        : bytes < 1048576 ? (bytes / 1024).toFixed(0) + ' KB'
+        : (bytes / 1048576).toFixed(1) + ' MB';
+}
+
 async function _loadParquet(name) {
     if (_loaded.has(name)) return;
     if (_loading.has(name)) return _loading.get(name);
     const p = (async () => {
+        _log(`fetch  data/${name}.parquet`);
         const resp = await fetch(`data/${name}.parquet`);
         const buf = await resp.arrayBuffer();
+        _log(`load   ${name}.parquet (${_fmtSize(buf.byteLength)})`, 'ok');
         await db.registerFileBuffer(`${name}.parquet`, new Uint8Array(buf));
         _loaded.add(name);
     })();
@@ -55,18 +65,25 @@ for (const name of TIER0) {
 }
 
 async function _init() {
+    _log('import duckdb-browser.mjs');
     const duckdb = await import('./vendor/duckdb/duckdb-browser.mjs');
+    _log('import duckdb-browser.mjs', 'ok');
     const base = new URL('.', import.meta.url).href;
     const mainModule = base + 'vendor/duckdb/duckdb-eh.wasm';
     const mainWorker = base + 'vendor/duckdb/duckdb-browser-eh.worker.js';
+    _log('spawn  duckdb worker');
     const workerBlob = new Blob([`importScripts("${mainWorker}");`], { type: 'text/javascript' });
     const worker = new Worker(URL.createObjectURL(workerBlob));
     db = new duckdb.AsyncDuckDB({ log: () => {} }, worker);
+    _log('fetch  duckdb-eh.wasm (34 MB)');
     await db.instantiate(mainModule);
+    _log('instantiate wasm runtime', 'ok');
     conn = await db.connect();
+    _log('connect to duckdb', 'ok');
     // Register prefetched tier 0 parquets (fetches started at module load)
     await Promise.all(TIER0.map(async n => {
         const buf = await _prefetched.get(n);
+        _log(`load   ${n}.parquet (${_fmtSize(buf.byteLength)})`, 'ok');
         await db.registerFileBuffer(`${n}.parquet`, new Uint8Array(buf));
         _loaded.add(n);
     }));

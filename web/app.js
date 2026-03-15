@@ -5,6 +5,31 @@ import { searchSTAC } from './vendor/s2-flares/stac.js';
 import { openCOG } from './vendor/s2-flares/cog.js';
 import { wgs84ToUtm, utmToWgs84, utmParams } from './vendor/s2-flares/geo.js';
 
+// Boot screen log
+const _bootLog = document.getElementById('boot-log');
+const _bootScreen = document.getElementById('boot-screen');
+const _t0 = performance.now();
+
+function bootLog(msg, cls) {
+    if (!_bootLog) return;
+    const el = document.createElement('span');
+    const ts = ((performance.now() - _t0) / 1000).toFixed(2).padStart(6);
+    el.textContent = `[${ts}s] ${msg}`;
+    if (cls) el.className = cls;
+    _bootLog.appendChild(el);
+    el.scrollIntoView({ block: 'end' });
+}
+
+function bootDone() {
+    bootLog('READY', 'ok');
+    _bootScreen.classList.add('done');
+    setTimeout(() => _bootScreen.remove(), 500);
+}
+
+db.onLog(bootLog);
+bootLog('GASLIGHT v1.0 — Permian Basin Flare Analysis System', 'head');
+bootLog('');
+
 const _css = k => getComputedStyle(document.documentElement).getPropertyValue(k).trim();
 const COLORS = {
     flare: _css('--color-flare'),
@@ -94,17 +119,23 @@ const map = new maplibregl.Map({
 
 
 // Start DuckDB init immediately — runs in parallel with map tile loading
+bootLog('init   duckdb wasm');
 const dbReady = db.init();
+bootLog('init   maplibre gl');
 
 map.on('load', async () => {
+    bootLog('map    tiles loaded', 'ok');
     $('stat-sites').textContent = 'Loading...';
 
     await dbReady;
+    bootLog('duckdb ready', 'ok');
 
     addEmptySources();
     addLayers();
     bindUI();
+    bootLog('query  flares.parquet');
     await refreshFlares();
+    bootLog(`render ${flareFeatures.length.toLocaleString()} flare sites`, 'ok');
     // Tier 1: start loading permits + plumes in background
     db.loadTier1();
     loadPermits();
@@ -113,6 +144,7 @@ map.on('load', async () => {
     handleDeepLink();
     // Start building operator index in background (ready for first click)
     db.buildOperatorIndex();
+    bootDone();
     // Stats use queryRenderedFeatures — wait for first idle after data loads
     map.once('idle', updateStats);
 
