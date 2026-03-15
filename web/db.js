@@ -187,19 +187,23 @@ export async function queryFlares({ operator } = {}) {
         where = `JOIN flare_operators fo USING (flare_id) WHERE lower(fo.operator_name) LIKE '%${op}%'`;
     }
     const result = await query(`
-        SELECT f.flare_id, f.lat, f.lon, f.detection_days,
-            f.total_rh_mw, f.avg_rh_mw,
+        SELECT f.flare_id, f.lat AS _lat, f.lon AS _lon,
+            round(f.lat, 2) AS lat, round(f.lon, 2) AS lon,
+            f.detection_days, f.total_rh_mw, f.avg_rh_mw,
             f.first_detected, f.last_detected
         FROM 'flares.parquet' f ${where}
     `);
     const data = rows(result);
     return {
         type: 'FeatureCollection',
-        features: data.map(r => ({
-            type: 'Feature',
-            geometry: { type: 'Point', coordinates: [Number(r.lon), Number(r.lat)] },
-            properties: r
-        }))
+        features: data.map(r => {
+            const { _lat, _lon, ...props } = r;
+            return {
+                type: 'Feature',
+                geometry: { type: 'Point', coordinates: [Number(_lon), Number(_lat)] },
+                properties: props
+            };
+        })
     };
 }
 
@@ -244,7 +248,9 @@ export async function queryPermits({ operator } = {}) {
     let where = 'WHERE latitude IS NOT NULL AND longitude IS NOT NULL';
     if (operator) where += ` AND lower(operator_name) LIKE '%${operator.toLowerCase().replace(/'/g, "''")}%'`;
     const result = await query(`
-        SELECT latitude, longitude, name, county, district,
+        SELECT latitude AS _lat, longitude AS _lon,
+            round(latitude, 2) AS latitude, round(longitude, 2) AS longitude,
+            name, county, district,
             release_type, operator_name,
             count(*) AS n_filings,
             MIN(effective_dt) AS earliest_effective,
@@ -252,17 +258,20 @@ export async function queryPermits({ operator } = {}) {
             MAX(release_rate_mcf_day) AS max_release_rate_mcf_day
         FROM 'permits.parquet'
         ${where}
-        GROUP BY latitude, longitude, name, county, district,
+        GROUP BY _lat, _lon, name, county, district,
             release_type, operator_name
     `);
     const data = rows(result);
     return {
         type: 'FeatureCollection',
-        features: data.map(r => ({
-            type: 'Feature',
-            geometry: { type: 'Point', coordinates: [Number(r.longitude), Number(r.latitude)] },
-            properties: r
-        }))
+        features: data.map(r => {
+            const { _lat, _lon, ...props } = r;
+            return {
+                type: 'Feature',
+                geometry: { type: 'Point', coordinates: [Number(_lon), Number(_lat)] },
+                properties: props
+            };
+        })
     };
 }
 
@@ -401,24 +410,31 @@ export async function queryNearestPermit(lat, lon, radiusKm = MATCH_RADIUS_KM) {
 export async function queryFacilities() {
     await need('facilities');
     const result = await query(`
-        SELECT serial_number, facility_name, plant_type, latitude, longitude
+        SELECT serial_number, facility_name, plant_type,
+            latitude AS _lat, longitude AS _lon,
+            round(latitude, 2) AS latitude, round(longitude, 2) AS longitude
         FROM 'facilities.parquet'
     `);
     const data = rows(result);
     return {
         type: 'FeatureCollection',
-        features: data.map(r => ({
-            type: 'Feature',
-            geometry: { type: 'Point', coordinates: [Number(r.longitude), Number(r.latitude)] },
-            properties: r
-        }))
+        features: data.map(r => {
+            const { _lat, _lon, ...props } = r;
+            return {
+                type: 'Feature',
+                geometry: { type: 'Point', coordinates: [Number(_lon), Number(_lat)] },
+                properties: props
+            };
+        })
     };
 }
 
 export async function queryPlumes() {
     await need('plumes');
     const result = await query(`
-        SELECT plume_id, latitude, longitude, source, satellite,
+        SELECT plume_id, latitude AS _lat, longitude AS _lon,
+            round(latitude, 2) AS latitude, round(longitude, 2) AS longitude,
+            source, satellite,
             CAST(date AS VARCHAR) AS date,
             emission_rate, emission_uncertainty, sector
         FROM 'plumes.parquet'
@@ -426,11 +442,14 @@ export async function queryPlumes() {
     const data = rows(result);
     return {
         type: 'FeatureCollection',
-        features: data.map(r => ({
-            type: 'Feature',
-            geometry: { type: 'Point', coordinates: [Number(r.longitude), Number(r.latitude)] },
-            properties: r
-        }))
+        features: data.map(r => {
+            const { _lat, _lon, ...props } = r;
+            return {
+                type: 'Feature',
+                geometry: { type: 'Point', coordinates: [Number(_lon), Number(_lat)] },
+                properties: props
+            };
+        })
     };
 }
 
@@ -475,7 +494,8 @@ export async function queryWells({ operator, bounds } = {}) {
     const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
     const result = await query(`
         SELECT api, oil_gas_code, lease_district, lease_number, well_number,
-            operator_name, latitude, longitude,
+            operator_name, latitude AS _lat, longitude AS _lon,
+            round(latitude, 2) AS latitude, round(longitude, 2) AS longitude,
             flared_mcf, produced_mcf, flaring_intensity_pct, lease_name
         FROM 'wells.parquet'
         ${where}
@@ -483,10 +503,13 @@ export async function queryWells({ operator, bounds } = {}) {
     const data = rows(result);
     return {
         type: 'FeatureCollection',
-        features: data.map(r => ({
-            type: 'Feature',
-            geometry: { type: 'Point', coordinates: [Number(r.longitude), Number(r.latitude)] },
-            properties: r
-        }))
+        features: data.map(r => {
+            const { _lat, _lon, ...props } = r;
+            return {
+                type: 'Feature',
+                geometry: { type: 'Point', coordinates: [Number(_lon), Number(_lat)] },
+                properties: props
+            };
+        })
     };
 }

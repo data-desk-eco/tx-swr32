@@ -8,12 +8,13 @@ const LAYERS = {
     infra:   { label: 'Infrastructure', color: () => _css('--color-infra'), latCol: 'latitude', lonCol: 'longitude', idCol: 'serial_number' },
 };
 
+const TAB_MAP = {
+    'flares-layer': 'flares', 'flare-pixels-fill': 'flares', 'flare-pixels-layer': 'flares',
+    'permits-layer': 'permits', 'plumes-layer': 'plumes', 'wells-layer': 'wells', 'infra-layer': 'infra',
+};
+
 const MIN_WIDTH = 300;
 const MAX_ROWS = 1000;
-
-function resetSelection() {
-    sortCol = null; sortDir = 'ASC'; selectedIdx = -1; selectedId = null;
-}
 
 function rowCoords(row, info) {
     return [Number(row[info.latCol]), Number(row[info.lonCol])];
@@ -111,7 +112,7 @@ function bindDrag() {
     handleEl.addEventListener('pointerenter', () => {
         if (preloaded || drawerWidth >= MIN_WIDTH) return;
         preloaded = true;
-        if (!activeTab) activateFirstTab();
+        ensureActiveTab();
         refreshTable();
     });
     handleEl.addEventListener('pointerleave', () => { preloaded = false; });
@@ -124,7 +125,7 @@ function bindDrag() {
         dragging = true;
         drawerEl.style.transition = 'none';
 
-        if (!activeTab) activateFirstTab();
+        ensureActiveTab();
     });
 
     let refreshRAF = null;
@@ -204,7 +205,7 @@ function bindKeyboard() {
                 const ci = visible.indexOf(activeTab);
                 if (ci > 0) {
                     activeTab = visible[ci - 1];
-                    resetSelection();
+                    selectedId = null; selectedIdx = -1;
                     updateTabs();
                     refreshTable();
                 }
@@ -216,7 +217,7 @@ function bindKeyboard() {
                 const ci = visible.indexOf(activeTab);
                 if (ci < visible.length - 1) {
                     activeTab = visible[ci + 1];
-                    resetSelection();
+                    selectedId = null; selectedIdx = -1;
                     updateTabs();
                     refreshTable();
                 }
@@ -277,7 +278,7 @@ function updateTabs() {
 
     if (!activeTab || !visible.includes(activeTab)) {
         activeTab = visible[0];
-        resetSelection();
+        selectedId = null; selectedIdx = -1;
     }
 
     for (const layer of visible) {
@@ -292,7 +293,7 @@ function updateTabs() {
         tab.addEventListener('click', () => {
             if (activeTab === layer) return;
             activeTab = layer;
-            resetSelection();
+            selectedId = null; selectedIdx = -1;
             updateTabs();
             refreshTable();
         });
@@ -300,11 +301,12 @@ function updateTabs() {
     }
 }
 
-function activateFirstTab() {
+// Pick a tab if none is set yet — preserves existing selection
+function ensureActiveTab() {
+    if (activeTab) { updateTabs(); return; }
     const visible = getVisibleLayers();
     if (visible.length > 0) {
         activeTab = visible[0];
-        resetSelection();
         updateTabs();
     }
 }
@@ -341,8 +343,24 @@ function refreshTable() {
     // Paginate
     if (filtered.length > MAX_ROWS) filtered = filtered.slice(0, MAX_ROWS);
 
+    // Pin selected row at the top — even if it's scrolled out of the viewport
+    if (selectedId != null) {
+        const idx = filtered.findIndex(r => getRowId(r, activeTab) === selectedId);
+        if (idx > 0) {
+            const [row] = filtered.splice(idx, 1);
+            filtered.unshift(row);
+        } else if (idx === -1) {
+            const row = rows.find(r => getRowId(r, activeTab) === selectedId);
+            if (row) filtered.unshift(row);
+        }
+        selectedIdx = 0;
+    } else {
+        selectedIdx = -1;
+    }
+
     currentRows = filtered;
     currentTotalCount = totalCount;
+
     renderTable(filtered, totalCount);
 }
 
@@ -353,7 +371,6 @@ function renderTable(data, totalCount) {
         return;
     }
 
-    const info = LAYERS[activeTab];
     const cols = Object.keys(data[0]);
 
     let html = '<thead><tr>';
@@ -366,10 +383,7 @@ function renderTable(data, totalCount) {
 
     for (let i = 0; i < data.length; i++) {
         const row = data[i];
-        const rowId = getRowId(row, activeTab);
-        const isSelected = selectedId != null && rowId === selectedId;
-
-        html += `<tr data-idx="${i}"${isSelected ? ' class="selected"' : ''}>`;
+        html += `<tr data-idx="${i}"${i === selectedIdx ? ' class="selected"' : ''}>`;
         for (const col of cols) {
             const v = row[col];
             html += `<td>${v == null ? '' : esc(v)}</td>`;
@@ -378,6 +392,12 @@ function renderTable(data, totalCount) {
     }
     html += '</tbody>';
     tableEl.innerHTML = html;
+
+    // Snap to top so pinned selected row is visible
+    if (selectedIdx === 0) {
+        const wrap = tableEl.closest('.drawer-table-wrap');
+        if (wrap) wrap.scrollTop = 0;
+    }
 
     if (totalCount > data.length) {
         footerEl.textContent = `${data.length.toLocaleString()} of ${totalCount.toLocaleString()} in view`;
@@ -427,29 +447,24 @@ function getRowId(row, table) {
 }
 
 export function highlight(layerType, id) {
-    if (drawerWidth < MIN_WIDTH) return;
-
     if (layerType == null || id == null) {
         selectedId = null;
         selectedIdx = -1;
-        if (activeTab) renderTable(currentRows, currentTotalCount);
+        if (tabBarEl && activeTab && drawerWidth >= MIN_WIDTH) renderTable(currentRows, currentTotalCount);
         return;
     }
 
-    const tabMap = {
-        'flares-layer': 'flares', 'flare-pixels-fill': 'flares', 'flare-pixels-layer': 'flares',
-        'permits-layer': 'permits', 'plumes-layer': 'plumes', 'wells-layer': 'wells', 'infra-layer': 'infra',
-    };
-    const tab = tabMap[layerType] || layerType;
-
+    const tab = TAB_MAP[layerType] || layerType;
     selectedId = String(id);
 
-    if (tab === activeTab) {
-        selectedIdx = currentRows.findIndex(r => getRowId(r, activeTab) === selectedId);
-        renderTable(currentRows, currentTotalCount);
-        if (selectedIdx >= 0) {
-            const tr = tableEl.querySelector(`tr[data-idx="${selectedIdx}"]`);
-            if (tr) tr.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-        }
+    // Switch to the correct tab (works even before DOM init — activeTab is just a string)
+    if (getVisibleLayers().includes(tab) && tab !== activeTab) {
+        activeTab = tab;
+        sortCol = null; sortDir = 'ASC';
     }
+
+    if (!tabBarEl || drawerWidth < MIN_WIDTH) return;
+
+    updateTabs();
+    refreshTable();
 }

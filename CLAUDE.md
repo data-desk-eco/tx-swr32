@@ -37,7 +37,7 @@ Single-page app with no build step and zero npm dependencies. MapLibre GL and Du
 
 - **app.js** — entry point. Initialises map, loads data, binds UI. Contains shared utilities: `$` (DOM lookup), `openDetail` (detail panel lifecycle), `fmtCoords`, color ramp functions (`b12Color`, `mwColor`), `renderTimeline` (shared SVG chart builder for both VNF sparklines and S2 timelines), and geo constants (`LAT_PER_M`, `lonPerM`).
 - **db.js** — DuckDB WASM interface. Loads parquets, exposes typed query functions. Shared helpers: `bboxDeltas` (lat/lon deltas from radius). Builds `flare_operators` in-memory table at startup for O(1) operator lookups.
-- **drawer.js** — data drawer with tabbed tables (flares/permits/plumes/wells), column sorting, keyboard navigation (j/k/h/l/g/G), viewport-synced queries.
+- **drawer.js** — data drawer with tabbed tables (flares/permits/plumes/wells/infra), column sorting, keyboard navigation (j/k/h/l/g/G), viewport-synced queries. Clicking a map feature switches to the relevant tab and pins the selected row at the top. Selection persists across pan/zoom and deep links.
 - **enhance.js** — manages s2-flares Web Worker lifecycle, localStorage caching, cluster state.
 - **style.css** — all styling via CSS custom properties. `.btn-action` base class for action buttons. `.glass` / `.panel` for frosted-glass panels.
 
@@ -55,7 +55,7 @@ Single-page app with no build step and zero npm dependencies. MapLibre GL and Du
 
 - **EBCDIC districts**: numeric codes mapped to alphanumeric via `rrc.district_map` (08→7B, 09→7C, 10→08, 11→8A)
 - **Permits**: `rrc.permits` merges raw filings + detail pages with parsed dates, eliminating repeated COALESCE patterns downstream.
-- **Well flaring**: `wells.parquet` includes per-lease flaring metrics (`flared_mcf`, `produced_mcf`, `flaring_intensity_pct`) joined from PDQ production data. Wells rendered as X markers (SDF symbol layer, z10+ only) colored by a combined score `sqrt(intensity% × ln(1 + flared_mcf))` on the same dark-red→white-hot ramp as flare sites. Well detail cards show a lease section with flaring stats and monthly production charts.
+- **Well flaring**: `wells.parquet` includes per-lease flaring metrics (`flared_mcf`, `produced_mcf`, `flaring_intensity_pct`) joined from PDQ production data. Wells rendered as X markers (SDF symbol layer, visible at all zooms) colored by a combined score `sqrt(intensity% × ln(1 + flared_mcf))` on the same dark-red→white-hot ramp as flare sites. Well detail cards show a lease section with flaring stats and monthly production charts.
 - **Gatherers/Purchasers**: `gatherers.parquet` from P-4 EBCDIC type 03 records (P4GPN segment). Links each lease to its gatherers, purchasers, and nominators via P-5 org numbers. Shown in well detail cards under the lease section, with current entities displayed prominently and historical ones collapsed.
 - **IMEO source**: `data/imeo_plumes.geojson` — manual download from methanedata.unep.org (no API).
 - **Permit coverage**: `rrc.permit_leases` maps each SWR 32 filing to its underlying leases.

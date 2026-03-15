@@ -253,7 +253,6 @@ function addLayers() {
     ];
     map.addLayer({
         id: 'wells-layer', type: 'symbol', source: 'wells',
-        minzoom: 10,
         layout: {
             visibility: 'none',
             'icon-image': 'well-x',
@@ -450,18 +449,8 @@ async function loadInfra() {
     drawer.setData('infra', data.features);
 }
 
-const WELLS_MIN_ZOOM = 10;
-
-function updateWellsToggle() {
-    const row = document.querySelector('.toggle-row[data-layer="wells"]');
-    if (!row) return;
-    const tooFar = map.getZoom() < WELLS_MIN_ZOOM;
-    row.classList.toggle('disabled', tooFar);
-    row.querySelector('input').disabled = tooFar;
-}
-
 async function loadWells() {
-    if (!layerState.wells || map.getZoom() < WELLS_MIN_ZOOM) return;
+    if (!layerState.wells) return;
     const b = map.getBounds();
     const bounds = { south: b.getSouth(), north: b.getNorth(), west: b.getWest(), east: b.getEast() };
     const data = await db.queryWells({ operator: operatorFilter || undefined, bounds });
@@ -645,7 +634,6 @@ function bindUI() {
     map.on('move', updateMapCentre);
     map.on('moveend', () => {
         updateStats();
-        updateWellsToggle();
         loadWells();
     });
 }
@@ -694,6 +682,7 @@ function handleDeepLink() {
     } else {
         feature.layer = { id: 'flares-layer' };
         showFeatureDetail(feature);
+        syncDrawer(feature);
     }
 }
 

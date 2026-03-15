@@ -8,7 +8,6 @@ and methane plume observations.
   + Sentinel-2 (20m resolution imagery)
   + SWR 32 exception permits (Texas RRC)
   + Oil/gas well locations (RRC EBCDIC bulk files)
-  + OTLS survey polygons (lease boundaries)
   + Carbon Mapper / IMEO methane plumes
   ─────────────────────────────────────
   → flaring analysis + interactive map
@@ -26,9 +25,9 @@ Sentinel-2 enhancement runs per-flare deep analysis at 20m resolution,
 clustering detections and matching them to nearby permits for permit
 coverage analysis.
 
-Leases are built from OTLS survey polygons containing each lease's
-wells. VNF sites within a lease footprint get allocated to that
-lease, enabling cross-reference with self-reported flaring volumes.
+Leases are linked via nearby wells within 375m. Wells carry lease
+district and number from RRC records; grouping by these fields
+connects flares to self-reported flaring volumes from PDQ data.
 
 Methane plumes from Carbon Mapper and IMEO are spatially overlaid
 for cross-reference with flare sites and wells.
@@ -58,7 +57,7 @@ Scrapers
 
   make permits          SWR 32 permit metadata
   make permit-details   Permit detail pages → CSVs
-  make rrc              EBCDIC well records + OTLS surveys
+  make rrc              EBCDIC well records
   make vnf              VIIRS Nightfire profiles (EOG)
   make plumes           Carbon Mapper + IMEO methane plumes
 

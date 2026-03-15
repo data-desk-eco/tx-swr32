@@ -83,7 +83,7 @@ def parse_filing_metadata(idx: dict[str, str], tree: etree._Element, filing_no: 
         "days_per_month": idx.get(f"{p}j_idt72", ""),
         "connected_to_gathering_system": idx.get(f"{p}j_idt75", ""),
         "distance_to_nearest_pipeline": idx.get(f"{p}j_idt77", ""),
-        "exception_reasons": ";".join(reasons),
+        "exception_reasons": "; ".join(reasons),
     }
 
 
