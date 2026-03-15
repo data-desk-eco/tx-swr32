@@ -1,4 +1,4 @@
-import * as db from './db.js?v=7';
+import * as db from './db.js?v=8';
 import { enhance, cancelEnhance, setUpdateCallback, getState, loadAllCached, getCluster, isEnhancing } from './enhance.js?v=4';
 import * as drawer from './drawer.js?v=2';
 import { searchSTAC } from './vendor/s2-flares/stac.js';
